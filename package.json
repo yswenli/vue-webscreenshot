@@ -1,6 +1,6 @@
 {
   "name": "@yswenli/vue-webscreenshot",
-  "version": "26.11.4-1",
+  "version": "1.0.0",
   "description": "基于 Vue 3 的纯网页截图与标注组件，支持框选、方框/椭圆/箭头/画笔/马赛克/文字标注，一键复制到剪贴板或下载",
   "repository": {
     "type": "git",
