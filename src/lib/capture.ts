@@ -5,10 +5,13 @@ export function isCaptureSupported(): boolean {
 /**
  * 抓取一帧屏幕静帧。
  * 必须在用户手势的调用栈内直接调用（前面不能有 await），否则浏览器会因失去用户激活而拒绝。
+ * @param delay 授权通过后到取帧的等待时间（毫秒），用于避开共享授权框关闭时的残影
  */
-export async function captureScreen(): Promise<HTMLCanvasElement> {
+export async function captureScreen(delay = 0): Promise<HTMLCanvasElement> {
 	const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
 	try {
+		// 授权框关闭瞬间系统画面可能还留着对话框残影，先等画面稳定再接流取帧
+		if (delay > 0) await wait(delay);
 		const video = document.createElement('video');
 		video.muted = true;
 		video.playsInline = true;
@@ -28,6 +31,10 @@ export async function captureScreen(): Promise<HTMLCanvasElement> {
 	} finally {
 		stream.getTracks().forEach((track) => track.stop());
 	}
+}
+
+function wait(ms: number): Promise<void> {
+	return new Promise<void>((resolve) => window.setTimeout(resolve, ms));
 }
 
 function waitFirstFrame(video: HTMLVideoElement): Promise<void> {

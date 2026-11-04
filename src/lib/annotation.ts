@@ -63,7 +63,7 @@ export interface DrawOption {
 /** 文字标注字体族；输入框与画布共用，保证预览与成品一致 */
 export const TEXT_FONT_FAMILY = 'system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
 /** 文字标注默认字号，单位 CSS 像素 */
-export const TEXT_FONT_SIZE = 14;
+export const TEXT_FONT_SIZE = 12;
 /** 文字标注行高倍数，画布换行与输入框行距共用 */
 export const TEXT_LINE_HEIGHT_RATIO = 1.35;
 

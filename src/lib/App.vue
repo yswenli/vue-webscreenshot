@@ -32,6 +32,7 @@
 				:model-value="state.tool"
 				:width="state.width"
 				:widths="widths"
+				:font-sizes="fontSizes"
 				:color="state.color"
 				:anchor="state.sel"
 				:can-undo="state.ops.length > 0"
@@ -56,8 +57,8 @@ import { drawOps, normalizeRect, renderSelection, TEXT_FONT_FAMILY, TEXT_FONT_SI
 import type { AnnotationOp, Point, Rect, ToolType } from './annotation';
 
 const COLORS = ['#ff4d4f', '#ffd400', '#22c55e', '#1677ff', '#111111', '#ffffff'];
-/** 输入框行高，与画布换行步进一致 */
-const TEXT_LINE_HEIGHT = TEXT_FONT_SIZE * TEXT_LINE_HEIGHT_RATIO;
+/** 文字字号档位，单位 CSS 像素 */
+const FONT_SIZES = [12, 16, 20];
 /** 输入框内容内边距（与 .vws-text 的 padding 保持一致） */
 const TEXT_PAD_X = 4;
 const TEXT_PAD_Y = 2;
@@ -66,15 +67,23 @@ const TEXT_MAX_WIDTH = 320;
 /** 输入框最小宽度 */
 const TEXT_MIN_WIDTH = 120;
 
+/** 输入框行高，与画布换行步进一致 */
+function textLineHeight(size: number): number {
+	return size * TEXT_LINE_HEIGHT_RATIO;
+}
+
 const props = withDefaults(
 	defineProps<{
 		show: boolean;
 		zIndex?: number;
 		fileName?: string;
+		/** 授权通过后到取帧的等待时间（毫秒），避开共享授权框关闭时的残影 */
+		captureDelay?: number;
 	}>(),
 	{
 		zIndex: 3000,
-		fileName: '网页截图'
+		fileName: '网页截图',
+		captureDelay: 1000
 	}
 );
 
@@ -120,7 +129,7 @@ const state = reactive<ShotState>({
 	textEditing: false,
 	textValue: '',
 	textFrameAt: { x: 0, y: 0 },
-	textBoxH: TEXT_LINE_HEIGHT + TEXT_PAD_Y * 2,
+	textBoxH: textLineHeight(TEXT_FONT_SIZE) + TEXT_PAD_Y * 2,
 	toast: ''
 });
 
@@ -142,6 +151,7 @@ function unlockBody(): void {
 }
 
 const widths = computed<number[]>(() => (state.tool === 'mosaic' ? [8, 12, 16] : [2, 4, 6]));
+const fontSizes = FONT_SIZES;
 
 const frameRatio = computed<number>(() => (frame && state.display.w > 0 ? frame.width / state.display.w : 1));
 
@@ -164,19 +174,19 @@ function toCss(p: Point): Point {
 	return { x: d.x + p.x / ratio, y: d.y + p.y / ratio };
 }
 
-let halfLeadingCache: number | null = null;
+let halfLeadingCache: { size: number; value: number } | null = null;
 
 /**
  * 行盒半行距：CSS 行高与字体行高之差的一半。
- * 用 measureText 取真实字体度量，避免猜测导致预览与落字错位。
+ * 用 measureText 取真实字体度量，避免猜测导致预览与落字错位；字号可变，按字号缓存。
  */
-function textHalfLeading(): number {
-	if (halfLeadingCache !== null) return halfLeadingCache;
-	let ascent = TEXT_FONT_SIZE * 0.9;
-	let descent = TEXT_FONT_SIZE * 0.2;
+function textHalfLeading(size: number): number {
+	if (halfLeadingCache && halfLeadingCache.size === size) return halfLeadingCache.value;
+	let ascent = size * 0.9;
+	let descent = size * 0.2;
 	const ctx = document.createElement('canvas').getContext('2d');
 	if (ctx) {
-		ctx.font = `${TEXT_FONT_SIZE}px ${TEXT_FONT_FAMILY}`;
+		ctx.font = `${size}px ${TEXT_FONT_FAMILY}`;
 		const metrics = ctx.measureText('Hg汉') as TextMetrics & {
 			fontBoundingBoxAscent?: number;
 			fontBoundingBoxDescent?: number;
@@ -184,8 +194,9 @@ function textHalfLeading(): number {
 		if (typeof metrics.fontBoundingBoxAscent === 'number') ascent = metrics.fontBoundingBoxAscent;
 		if (typeof metrics.fontBoundingBoxDescent === 'number') descent = metrics.fontBoundingBoxDescent;
 	}
-	halfLeadingCache = (TEXT_LINE_HEIGHT - (ascent + descent)) / 2;
-	return halfLeadingCache;
+	const value = (textLineHeight(size) - (ascent + descent)) / 2;
+	halfLeadingCache = { size, value };
+	return value;
 }
 
 interface TextLayout {
@@ -204,6 +215,7 @@ interface TextLayout {
 const textLayout = computed<TextLayout>(() => {
 	const at = toCss(state.textFrameAt);
 	const sel = state.sel;
+	const size = state.width;
 	const vw = window.innerWidth;
 	const vh = window.innerHeight;
 	const maxWidth = Math.max(60, Math.min(TEXT_MAX_WIDTH, vw - 8));
@@ -213,9 +225,9 @@ const textLayout = computed<TextLayout>(() => {
 	// 宽度被抬到最小宽度后可能探出选区右侧，整体左移而不是让文字被裁掉
 	if (sel) left = Math.min(left, sel.x + sel.w + TEXT_PAD_X - width);
 	left = Math.min(Math.max(4, left), Math.max(4, vw - width - 4));
-	let top = at.y - TEXT_PAD_Y - textHalfLeading();
+	let top = at.y - TEXT_PAD_Y - textHalfLeading(size);
 	top = Math.min(Math.max(4, top), Math.max(4, vh - state.textBoxH - 4));
-	return { left: Math.round(left), top: Math.round(top), width, textOffsetY: TEXT_PAD_Y + textHalfLeading() };
+	return { left: Math.round(left), top: Math.round(top), width, textOffsetY: TEXT_PAD_Y + textHalfLeading(size) };
 });
 
 const textInputStyle = computed((): Record<string, string> => {
@@ -226,8 +238,8 @@ const textInputStyle = computed((): Record<string, string> => {
 		width: `${box.width}px`,
 		color: state.color,
 		fontFamily: TEXT_FONT_FAMILY,
-		fontSize: `${TEXT_FONT_SIZE}px`,
-		lineHeight: `${TEXT_LINE_HEIGHT}px`
+		fontSize: `${state.width}px`,
+		lineHeight: `${textLineHeight(state.width)}px`
 	};
 });
 
@@ -308,7 +320,7 @@ async function start(): Promise<void> {
 	}
 	state.capturing = true;
 	try {
-		frame = await captureScreen();
+		frame = await captureScreen(props.captureDelay);
 		resetForShot();
 		layout();
 		state.visible = true;
@@ -501,14 +513,26 @@ function onPointerUp(): void {
 function openTextEditor(p: Point): void {
 	state.textFrameAt = toFrame(p);
 	state.textValue = '';
-	state.textBoxH = TEXT_LINE_HEIGHT + TEXT_PAD_Y * 2;
+	state.textBoxH = textLineHeight(state.width) + TEXT_PAD_Y * 2;
 	state.textEditing = true;
 	void nextTick(() => {
-		const el = textInputRef.value;
-		if (!el) return;
-		el.focus();
-		syncTextSize();
+		if (state.textEditing) focusTextEditor();
 	});
+}
+
+/**
+ * 聚焦文字输入框。
+ * pointerdown 的默认聚焦行为排在微任务之后（会把焦点移到 body），
+ * 在 nextTick 里聚焦会被它抢走并立刻触发 blur，输入框刚出现就被关掉，
+ * 所以用宏任务延后一帧，确保聚焦排在默认行为之后。
+ */
+function focusTextEditor(): void {
+	window.setTimeout(() => {
+		const el = textInputRef.value;
+		if (!el || !state.textEditing) return;
+		if (document.activeElement !== el) el.focus();
+		syncTextSize();
+	}, 0);
 }
 
 /** Shift+Enter 换行，Enter 提交；组词中的回车是选词，不能当提交 */
@@ -528,7 +552,7 @@ function commitText(): void {
 	if (text) {
 		// 落字原点取输入框内首行文字的位置，预览与成品完全重合
 		const origin = toFrame({ x: box.left + TEXT_PAD_X, y: box.top + box.textOffsetY });
-		state.ops.push({ type: 'text', color: state.color, width: TEXT_FONT_SIZE, x: origin.x, y: origin.y, text });
+		state.ops.push({ type: 'text', color: state.color, width: state.width, x: origin.x, y: origin.y, text });
 	}
 	repaint();
 }

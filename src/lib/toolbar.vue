@@ -31,7 +31,20 @@
 					<span :style="dotStyle(w)" />
 				</button>
 			</template>
-			<span v-if="showWidths && showColors" class="vws-tb__sep" />
+			<template v-if="showSizes">
+				<button
+					v-for="s in fontSizes"
+					:key="s"
+					type="button"
+					class="vws-tb__size"
+					:class="{ 'is-active': width === s }"
+					:title="`字号 ${s}`"
+					@click="emit('update:width', s)"
+				>
+					{{ s }}
+				</button>
+			</template>
+			<span v-if="(showWidths || showSizes) && showColors" class="vws-tb__sep" />
 			<template v-if="showColors">
 				<button
 					v-for="c in colors"
@@ -60,6 +73,8 @@ const props = defineProps<{
 	modelValue: ToolType | null;
 	width: number;
 	widths: number[];
+	/** 文字工具的字号档位 */
+	fontSizes: number[];
 	color: string;
 	anchor: Rect;
 	canUndo: boolean;
@@ -90,6 +105,7 @@ const rootRef = ref<HTMLElement | null>(null);
 const size = reactive({ w: 0, h: 0 });
 
 const showWidths = computed(() => !!props.modelValue && props.modelValue !== 'text');
+const showSizes = computed(() => props.modelValue === 'text');
 const showColors = computed(() => !!props.modelValue && props.modelValue !== 'mosaic');
 
 function dotStyle(width: number): Record<string, string> {
@@ -228,6 +244,30 @@ onUnmounted(() => window.removeEventListener('resize', measure));
 
 .vws-tb__dot.is-active {
 	background: rgba(255, 255, 255, 0.22);
+}
+
+.vws-tb__size {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 24px;
+	height: 24px;
+	padding: 0 4px;
+	border: none;
+	border-radius: 4px;
+	background: transparent;
+	color: #f2f2f2;
+	font-size: 12px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.vws-tb__size:hover {
+	background: rgba(255, 255, 255, 0.14);
+}
+
+.vws-tb__size.is-active {
+	background: rgba(255, 255, 255, 0.26);
 }
 
 .vws-tb__color {
