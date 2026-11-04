@@ -20,9 +20,17 @@ interface BaseOp {
 	width: number;
 }
 
-export interface ShapeOp extends BaseOp {
-	type: 'rect' | 'ellipse' | 'arrow' | 'mosaic';
+/** 以矩形表达的图形；矩形已归一化（w/h 非负），不携带方向 */
+export interface RectShapeOp extends BaseOp {
+	type: 'rect' | 'ellipse' | 'mosaic';
 	rect: Rect;
+}
+
+/** 箭头必须保留起止顺序：归一化成矩形会丢掉方向，画出来会指向反方向 */
+export interface ArrowOp extends BaseOp {
+	type: 'arrow';
+	from: Point;
+	to: Point;
 }
 
 export interface BrushOp extends BaseOp {
@@ -37,7 +45,7 @@ export interface TextOp extends BaseOp {
 	text: string;
 }
 
-export type AnnotationOp = ShapeOp | BrushOp | TextOp;
+export type AnnotationOp = RectShapeOp | ArrowOp | BrushOp | TextOp;
 
 /** 几何坐标始终是静帧像素，这里描述如何映射到当前绘制目标 */
 export interface DrawOption {
@@ -52,7 +60,12 @@ export interface DrawOption {
 	source: CanvasImageSource | null;
 }
 
-const FONT_FAMILY = 'system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+/** 文字标注字体族；输入框与画布共用，保证预览与成品一致 */
+export const TEXT_FONT_FAMILY = 'system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+/** 文字标注默认字号，单位 CSS 像素 */
+export const TEXT_FONT_SIZE = 14;
+/** 文字标注行高倍数，画布换行与输入框行距共用 */
+export const TEXT_LINE_HEIGHT_RATIO = 1.35;
 
 let scratch: HTMLCanvasElement | null = null;
 
@@ -79,22 +92,25 @@ export function drawOps(ctx: CanvasRenderingContext2D, ops: AnnotationOp[], opt:
 }
 
 function drawOp(ctx: CanvasRenderingContext2D, op: AnnotationOp, opt: DrawOption): void {
-	if (op.type === 'mosaic') {
-		drawMosaic(ctx, op, opt);
-		return;
+	switch (op.type) {
+		case 'mosaic':
+			drawMosaic(ctx, op, opt);
+			return;
+		case 'text':
+			drawText(ctx, op, opt);
+			return;
+		case 'brush':
+			drawBrush(ctx, op, opt);
+			return;
+		case 'arrow':
+			drawArrow(ctx, op, opt);
+			return;
+		default:
+			drawRectShape(ctx, op, opt);
 	}
-	if (op.type === 'text') {
-		drawText(ctx, op, opt);
-		return;
-	}
-	if (op.type === 'brush') {
-		drawBrush(ctx, op, opt);
-		return;
-	}
-	drawShape(ctx, op, opt);
 }
 
-function drawShape(ctx: CanvasRenderingContext2D, op: ShapeOp, opt: DrawOption): void {
+function drawRectShape(ctx: CanvasRenderingContext2D, op: RectShapeOp, opt: DrawOption): void {
 	const x = opt.offsetX + op.rect.x * opt.scale;
 	const y = opt.offsetY + op.rect.y * opt.scale;
 	const w = op.rect.w * opt.scale;
@@ -108,26 +124,47 @@ function drawShape(ctx: CanvasRenderingContext2D, op: ShapeOp, opt: DrawOption):
 	ctx.lineJoin = 'round';
 	if (op.type === 'rect') {
 		ctx.strokeRect(x, y, w, h);
-	} else if (op.type === 'ellipse') {
+	} else {
 		ctx.beginPath();
 		ctx.ellipse(x + w / 2, y + h / 2, Math.max(w / 2, 0.5), Math.max(h / 2, 0.5), 0, 0, Math.PI * 2);
 		ctx.stroke();
-	} else {
-		const x2 = x + w;
-		const y2 = y + h;
-		ctx.beginPath();
-		ctx.moveTo(x, y);
-		ctx.lineTo(x2, y2);
-		ctx.stroke();
-		const angle = Math.atan2(y2 - y, x2 - x);
-		const head = Math.max(10 * opt.widthScale, lineWidth * 3.5);
-		ctx.beginPath();
-		ctx.moveTo(x2, y2);
-		ctx.lineTo(x2 - head * Math.cos(angle - Math.PI / 7), y2 - head * Math.sin(angle - Math.PI / 7));
-		ctx.lineTo(x2 - head * Math.cos(angle + Math.PI / 7), y2 - head * Math.sin(angle + Math.PI / 7));
-		ctx.closePath();
-		ctx.fill();
 	}
+	ctx.restore();
+}
+
+/** 箭头张角的一半 */
+const ARROW_HEAD_ANGLE = Math.PI / 7;
+
+function drawArrow(ctx: CanvasRenderingContext2D, op: ArrowOp, opt: DrawOption): void {
+	const x1 = opt.offsetX + op.from.x * opt.scale;
+	const y1 = opt.offsetY + op.from.y * opt.scale;
+	const x2 = opt.offsetX + op.to.x * opt.scale;
+	const y2 = opt.offsetY + op.to.y * opt.scale;
+	const dx = x2 - x1;
+	const dy = y2 - y1;
+	const length = Math.hypot(dx, dy);
+	if (length < 0.5) return;
+	const lineWidth = Math.max(1, op.width * opt.widthScale);
+	// 头部长度不超过箭杆的一半，否则短箭头的三角会翻出起点、画成反向
+	const head = Math.min(Math.max(10 * opt.widthScale, lineWidth * 3.5), length * 0.5);
+	const angle = Math.atan2(dy, dx);
+	ctx.save();
+	ctx.strokeStyle = op.color;
+	ctx.fillStyle = op.color;
+	ctx.lineWidth = lineWidth;
+	ctx.lineCap = 'round';
+	ctx.lineJoin = 'round';
+	// 箭杆止于三角根部，避免粗线从尖端穿出
+	ctx.beginPath();
+	ctx.moveTo(x1, y1);
+	ctx.lineTo(x2 - head * Math.cos(angle), y2 - head * Math.sin(angle));
+	ctx.stroke();
+	ctx.beginPath();
+	ctx.moveTo(x2, y2);
+	ctx.lineTo(x2 - head * Math.cos(angle - ARROW_HEAD_ANGLE), y2 - head * Math.sin(angle - ARROW_HEAD_ANGLE));
+	ctx.lineTo(x2 - head * Math.cos(angle + ARROW_HEAD_ANGLE), y2 - head * Math.sin(angle + ARROW_HEAD_ANGLE));
+	ctx.closePath();
+	ctx.fill();
 	ctx.restore();
 }
 
@@ -165,14 +202,14 @@ function drawText(ctx: CanvasRenderingContext2D, op: TextOp, opt: DrawOption): v
 	ctx.fillStyle = op.color;
 	ctx.textAlign = 'left';
 	ctx.textBaseline = 'top';
-	ctx.font = `${fontPx}px ${FONT_FAMILY}`;
+	ctx.font = `${fontPx}px ${TEXT_FONT_FAMILY}`;
 	op.text.split('\n').forEach((line, index) => {
-		ctx.fillText(line, x, y + index * fontPx * 1.35);
+		ctx.fillText(line, x, y + index * fontPx * TEXT_LINE_HEIGHT_RATIO);
 	});
 	ctx.restore();
 }
 
-function drawMosaic(ctx: CanvasRenderingContext2D, op: ShapeOp, opt: DrawOption): void {
+function drawMosaic(ctx: CanvasRenderingContext2D, op: RectShapeOp, opt: DrawOption): void {
 	const x = opt.offsetX + op.rect.x * opt.scale;
 	const y = opt.offsetY + op.rect.y * opt.scale;
 	const w = op.rect.w * opt.scale;

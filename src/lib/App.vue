@@ -13,16 +13,18 @@
 		>
 			<canvas ref="canvasRef" class="vws-canvas" />
 			<div v-if="sizeLabel" class="vws-size" :style="sizeLabelStyle">{{ sizeLabel }}</div>
-			<input
+			<textarea
 				v-if="state.textEditing"
 				ref="textInputRef"
 				v-model="state.textValue"
 				class="vws-text"
 				:style="textInputStyle"
+				rows="1"
+				spellcheck="false"
 				placeholder="输入文字"
 				@pointerdown.stop
-				@keydown.enter.prevent.stop="commitText"
-				@keydown.esc.prevent.stop="cancelText"
+				@input="syncTextSize"
+				@keydown="onTextKeyDown"
 				@blur="commitText"
 			/>
 			<Toolbar
@@ -50,11 +52,19 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import Toolbar from './toolbar.vue';
 import { captureScreen, isCaptureSupported } from './capture';
-import { drawOps, normalizeRect, renderSelection } from './annotation';
+import { drawOps, normalizeRect, renderSelection, TEXT_FONT_FAMILY, TEXT_FONT_SIZE, TEXT_LINE_HEIGHT_RATIO } from './annotation';
 import type { AnnotationOp, Point, Rect, ToolType } from './annotation';
 
 const COLORS = ['#ff4d4f', '#ffd400', '#22c55e', '#1677ff', '#111111', '#ffffff'];
-const TEXT_SIZE = 14;
+/** 输入框行高，与画布换行步进一致 */
+const TEXT_LINE_HEIGHT = TEXT_FONT_SIZE * TEXT_LINE_HEIGHT_RATIO;
+/** 输入框内容内边距（与 .vws-text 的 padding 保持一致） */
+const TEXT_PAD_X = 4;
+const TEXT_PAD_Y = 2;
+/** 输入框最大宽度 */
+const TEXT_MAX_WIDTH = 320;
+/** 输入框最小宽度 */
+const TEXT_MIN_WIDTH = 120;
 
 const props = withDefaults(
 	defineProps<{
@@ -89,8 +99,10 @@ interface ShotState {
 	color: string;
 	textEditing: boolean;
 	textValue: string;
-	textAt: Point;
+	/** 文字锚点，静帧像素；CSS 坐标由它换算，窗口尺寸变化时自动跟随 */
 	textFrameAt: Point;
+	/** 输入框当前高度，用于边界夹紧 */
+	textBoxH: number;
 	toast: string;
 }
 
@@ -107,13 +119,13 @@ const state = reactive<ShotState>({
 	color: COLORS[0],
 	textEditing: false,
 	textValue: '',
-	textAt: { x: 0, y: 0 },
 	textFrameAt: { x: 0, y: 0 },
+	textBoxH: TEXT_LINE_HEIGHT + TEXT_PAD_Y * 2,
 	toast: ''
 });
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
-const textInputRef = ref<HTMLInputElement | null>(null);
+const textInputRef = ref<HTMLTextAreaElement | null>(null);
 
 let frame: HTMLCanvasElement | null = null;
 let toastTimer = 0;
@@ -146,12 +158,88 @@ const sizeLabelStyle = computed((): Record<string, string> => {
 	return { left: `${Math.round(sel.x + 6)}px`, top: `${Math.round(sel.y + 6)}px` };
 });
 
-const textInputStyle = computed<Record<string, string>>(() => ({
-	left: `${Math.round(state.textAt.x)}px`,
-	top: `${Math.round(state.textAt.y)}px`,
-	color: state.color,
-	fontSize: `${TEXT_SIZE}px`
-}));
+function toCss(p: Point): Point {
+	const d = state.display;
+	const ratio = frameRatio.value;
+	return { x: d.x + p.x / ratio, y: d.y + p.y / ratio };
+}
+
+let halfLeadingCache: number | null = null;
+
+/**
+ * 行盒半行距：CSS 行高与字体行高之差的一半。
+ * 用 measureText 取真实字体度量，避免猜测导致预览与落字错位。
+ */
+function textHalfLeading(): number {
+	if (halfLeadingCache !== null) return halfLeadingCache;
+	let ascent = TEXT_FONT_SIZE * 0.9;
+	let descent = TEXT_FONT_SIZE * 0.2;
+	const ctx = document.createElement('canvas').getContext('2d');
+	if (ctx) {
+		ctx.font = `${TEXT_FONT_SIZE}px ${TEXT_FONT_FAMILY}`;
+		const metrics = ctx.measureText('Hg汉') as TextMetrics & {
+			fontBoundingBoxAscent?: number;
+			fontBoundingBoxDescent?: number;
+		};
+		if (typeof metrics.fontBoundingBoxAscent === 'number') ascent = metrics.fontBoundingBoxAscent;
+		if (typeof metrics.fontBoundingBoxDescent === 'number') descent = metrics.fontBoundingBoxDescent;
+	}
+	halfLeadingCache = (TEXT_LINE_HEIGHT - (ascent + descent)) / 2;
+	return halfLeadingCache;
+}
+
+interface TextLayout {
+	/** 输入框左上角（border-box），CSS 像素 */
+	left: number;
+	top: number;
+	width: number;
+	/** 首行文字上沿相对输入框顶部的偏移：内边距 + 半行距 */
+	textOffsetY: number;
+}
+
+/**
+ * 输入框布局。落字原点始终等于输入框内首行文字的位置，
+ * 因此位置被夹紧（靠右/靠下点击）时，预览和最终落字仍然重合。
+ */
+const textLayout = computed<TextLayout>(() => {
+	const at = toCss(state.textFrameAt);
+	const sel = state.sel;
+	const vw = window.innerWidth;
+	const vh = window.innerHeight;
+	const maxWidth = Math.max(60, Math.min(TEXT_MAX_WIDTH, vw - 8));
+	const room = sel ? sel.x + sel.w - at.x : maxWidth;
+	const width = Math.round(Math.min(maxWidth, Math.max(TEXT_MIN_WIDTH, room)));
+	let left = at.x - TEXT_PAD_X;
+	// 宽度被抬到最小宽度后可能探出选区右侧，整体左移而不是让文字被裁掉
+	if (sel) left = Math.min(left, sel.x + sel.w + TEXT_PAD_X - width);
+	left = Math.min(Math.max(4, left), Math.max(4, vw - width - 4));
+	let top = at.y - TEXT_PAD_Y - textHalfLeading();
+	top = Math.min(Math.max(4, top), Math.max(4, vh - state.textBoxH - 4));
+	return { left: Math.round(left), top: Math.round(top), width, textOffsetY: TEXT_PAD_Y + textHalfLeading() };
+});
+
+const textInputStyle = computed((): Record<string, string> => {
+	const box = textLayout.value;
+	return {
+		left: `${box.left}px`,
+		top: `${box.top}px`,
+		width: `${box.width}px`,
+		color: state.color,
+		fontFamily: TEXT_FONT_FAMILY,
+		fontSize: `${TEXT_FONT_SIZE}px`,
+		lineHeight: `${TEXT_LINE_HEIGHT}px`
+	};
+});
+
+/** 输入框随内容增高：先归零再读 scrollHeight，否则缩不回去 */
+function syncTextSize(): void {
+	const el = textInputRef.value;
+	if (!el) return;
+	el.style.height = 'auto';
+	const height = el.scrollHeight;
+	el.style.height = `${height}px`;
+	if (height !== state.textBoxH) state.textBoxH = height;
+}
 
 function setToast(text: string): void {
 	state.toast = text;
@@ -319,17 +407,25 @@ function buildOp(tool: ToolType, from: Point, to: Point, points: Point[]): Annot
 	if (tool === 'brush') {
 		return { type: 'brush', color: state.color, width: state.width, points: points.map((p) => ({ ...p })) };
 	}
+	// 箭头保留起止顺序，不能用归一化矩形
+	if (tool === 'arrow') {
+		return { type: 'arrow', color: state.color, width: state.width, from: { ...from }, to: { ...to } };
+	}
 	return { type: tool, color: state.color, width: state.width, rect: normalizeRect(from, to) };
 }
 
 function isMeaningful(op: AnnotationOp): boolean {
 	if (op.type === 'brush') return op.points.length > 1;
 	if (op.type === 'text') return op.text.trim().length > 0;
+	// 水平/垂直箭头的 w 或 h 为 0，只能按长度判
+	if (op.type === 'arrow') return Math.hypot(op.to.x - op.from.x, op.to.y - op.from.y) >= 4;
 	return op.rect.w >= 2 && op.rect.h >= 2;
 }
 
 function onPointerDown(event: PointerEvent): void {
-	if (state.capturing || state.textEditing) return;
+	if (state.capturing) return;
+	// 输入框的 blur 晚于 pointerdown，等 blur 提交会让这一笔点击被吞掉
+	if (state.textEditing) commitText();
 	const host = event.currentTarget as HTMLElement | null;
 	if (host && typeof host.setPointerCapture === 'function') {
 		try {
@@ -403,20 +499,36 @@ function onPointerUp(): void {
 }
 
 function openTextEditor(p: Point): void {
-	state.textAt = { x: p.x, y: p.y };
 	state.textFrameAt = toFrame(p);
 	state.textValue = '';
+	state.textBoxH = TEXT_LINE_HEIGHT + TEXT_PAD_Y * 2;
 	state.textEditing = true;
-	void nextTick(() => textInputRef.value?.focus());
+	void nextTick(() => {
+		const el = textInputRef.value;
+		if (!el) return;
+		el.focus();
+		syncTextSize();
+	});
+}
+
+/** Shift+Enter 换行，Enter 提交；组词中的回车是选词，不能当提交 */
+function onTextKeyDown(event: KeyboardEvent): void {
+	if (event.key !== 'Enter' || event.shiftKey) return;
+	if (event.isComposing || event.keyCode === 229) return;
+	event.preventDefault();
+	commitText();
 }
 
 function commitText(): void {
 	if (!state.textEditing) return;
 	const text = state.textValue.trim();
+	const box = textLayout.value;
 	state.textEditing = false;
 	state.textValue = '';
 	if (text) {
-		state.ops.push({ type: 'text', color: state.color, width: TEXT_SIZE, x: state.textFrameAt.x, y: state.textFrameAt.y, text });
+		// 落字原点取输入框内首行文字的位置，预览与成品完全重合
+		const origin = toFrame({ x: box.left + TEXT_PAD_X, y: box.top + box.textOffsetY });
+		state.ops.push({ type: 'text', color: state.color, width: TEXT_FONT_SIZE, x: origin.x, y: origin.y, text });
 	}
 	repaint();
 }
@@ -429,16 +541,18 @@ function cancelText(): void {
 }
 
 function undo(): void {
+	// 输入中的文字先落地再撤销，撤销按钮点击不会因为 pointerdown 被拦截而丢字
+	if (state.textEditing) commitText();
 	if (!state.ops.length) return;
 	state.ops.pop();
 	repaint();
 }
 
 function onToolChange(tool: ToolType | null): void {
-	state.textEditing = false;
-	state.textValue = '';
+	// 切换工具时提交而不是丢弃正在输入的文字
+	if (state.textEditing) commitText();
 	state.tool = tool;
-	if (tool === 'text') state.width = TEXT_SIZE;
+	if (tool === 'text') state.width = TEXT_FONT_SIZE;
 	else if (tool === 'mosaic') state.width = 8;
 	else if (tool) state.width = 2;
 	repaint();
@@ -495,10 +609,8 @@ async function exportBlob(): Promise<Blob | null> {
 
 async function onConfirm(): Promise<void> {
 	if (state.capturing) return;
-	if (state.textEditing) {
-		commitText();
-		return;
-	}
+	// 完成时把输入中的文字一并落地，而不是只提交文字
+	if (state.textEditing) commitText();
 	if (!state.sel) return;
 	const blob = await exportBlob();
 	if (!blob) {
@@ -512,6 +624,8 @@ async function onConfirm(): Promise<void> {
 }
 
 async function onDownload(): Promise<void> {
+	// 输入中的文字先落地，下载结果才包含它
+	if (state.textEditing) commitText();
 	if (!state.sel) return;
 	const blob = await exportBlob();
 	if (!blob) {
@@ -536,6 +650,8 @@ function onResize(): void {
 		state.sel = normalizeRect(clampToDisplay(sel.x, sel.y), clampToDisplay(sel.x + sel.w, sel.y + sel.h));
 	}
 	repaint();
+	// 输入框宽度随窗口变化后会重新折行，高度需跟着重算
+	if (state.textEditing) void nextTick(syncTextSize);
 }
 
 function onKeyDown(event: KeyboardEvent): void {
@@ -615,16 +731,25 @@ onUnmounted(() => {
 
 .vws-text {
 	position: absolute;
-	min-width: 90px;
-	max-width: 320px;
+	box-sizing: border-box;
+	margin: 0;
 	padding: 2px 4px;
-	border: 1px dashed currentColor;
+	border: 0;
+	/* 用 outline 不用 border：不参与布局，首行文字起点才不会偏 */
+	outline: 1px dashed currentColor;
 	border-radius: 3px;
 	background: rgba(0, 0, 0, 0.35);
-	outline: none;
-	line-height: 1.4;
+	overflow: hidden;
+	resize: none;
+	white-space: pre-wrap;
+	word-break: break-word;
+	caret-color: currentColor;
 	user-select: text;
 	-webkit-user-select: text;
+}
+
+.vws-text::placeholder {
+	color: rgba(255, 255, 255, 0.55);
 }
 
 .vws-toast {
