@@ -1,0 +1,64 @@
+{
+  "name": "vue-webscreenshot",
+  "version": "26.11.4-1",
+  "description": "基于 Vue 3 的纯网页截图与标注组件，支持框选、方框/椭圆/箭头/画笔/马赛克/文字标注，一键复制到剪贴板或下载",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yswenli/vue-webscreenshot.git"
+  },
+  "homepage": "https://github.com/yswenli/vue-webscreenshot#readme",
+  "bugs": {
+    "url": "https://github.com/yswenli/vue-webscreenshot/issues"
+  },
+  "keywords": [
+    "vue",
+    "vue3",
+    "screenshot",
+    "webscreenshot",
+    "capture",
+    "annotation",
+    "getDisplayMedia",
+    "clipboard",
+    "截图",
+    "标注",
+    "component",
+    "typescript"
+  ],
+  "author": "yswenli",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "module": "./dist/vue-webscreenshot.es.js",
+  "main": "./dist/vue-webscreenshot.umd.js",
+  "typings": "./dist/main.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/main.d.ts",
+      "import": "./dist/vue-webscreenshot.es.js",
+      "require": "./dist/vue-webscreenshot.umd.js"
+    },
+    "./css": "./dist/vue-webscreenshot.css",
+    "./dist/*": "./dist/*"
+  },
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "peerDependencies": {
+    "vue": "^3.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@vitejs/plugin-vue": "^4.6.2",
+    "typescript": "^5.4.5",
+    "vite": "^4.5.5",
+    "vite-plugin-dts": "^3.9.1",
+    "vue": "^3.3.4",
+    "vue-tsc": "^2.0.29"
+  }
+}
