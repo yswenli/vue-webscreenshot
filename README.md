@@ -15,6 +15,12 @@
   <strong>简体中文</strong>
 </p>
 
+<p align="center">
+  <img src="./demo.png" alt="vue-webscreenshot 截图标注演示：在网页上框选区域并添加方框、箭头等标注" width="720">
+</p>
+
+<p align="center"><sub>框选 + 方框 / 箭头标注，一键复制或下载</sub></p>
+
 ---
 
 ## 为什么用它？
@@ -46,7 +52,7 @@
 
 ## 环境要求
 
-- 仅支持 **Chromium 系**浏览器（Chrome / Edge / 360 极速模式）；Firefox、Safari 未做适配。
+- 支持 **Chromium 系**浏览器（Chrome / Edge / 360 极速模式）与 **macOS Safari 13+**；Firefox 未做适配，iOS / iPadOS Safari 不提供 `getDisplayMedia`，会走「不支持」提示。
 - 必须在**安全上下文**中运行：`https` 或 `localhost` / `127.0.0.1`。局域网 IP 的 `http` 页面会被浏览器禁用抓屏。
 - 首次点击会弹出系统共享授权框，由用户选择抓取范围（当前标签页 / 窗口 / 整个屏幕）。这是浏览器机制，非组件缺陷。
 

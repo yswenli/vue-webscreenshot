@@ -607,17 +607,8 @@ function stamp(): string {
 	return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 }
 
-async function copyImage(blob: Blob): Promise<boolean> {
-	try {
-		if (typeof ClipboardItem === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.write !== 'function') return false;
-		await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-async function exportBlob(): Promise<Blob | null> {
+/** 同步合成选区画布：Safari 的剪贴板写入要求全程留在用户手势的调用栈内，合成不能 await */
+function renderOutput(): HTMLCanvasElement | null {
 	const sel = state.sel;
 	if (!sel || !frame) return null;
 	const ratio = frame.width / state.display.w;
@@ -627,32 +618,96 @@ async function exportBlob(): Promise<Blob | null> {
 		w: sel.w * ratio,
 		h: sel.h * ratio
 	};
-	const out = renderSelection(frame, state.ops, selInFrame, ratio);
-	return new Promise<Blob | null>((resolve) => out.toBlob((blob) => resolve(blob), 'image/png'));
+	return renderSelection(frame, state.ops, selInFrame, ratio);
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+	return new Promise<Blob>((resolve, reject) => {
+		canvas.toBlob((blob) => {
+			if (blob) resolve(blob);
+			else reject(new Error('截图合成失败'));
+		}, 'image/png');
+	});
+}
+
+function canWriteClipboard(): boolean {
+	return typeof ClipboardItem !== 'undefined' && !!navigator.clipboard && typeof navigator.clipboard.write === 'function';
+}
+
+/**
+ * 写图片到剪贴板。
+ * Safari 要求 clipboard.write 在用户手势的调用栈内同步发起，中途 await 会直接 NotAllowedError。
+ * 因此这里把「待定的 Blob」交给 ClipboardItem，让浏览器自己等它，write 调用本身不跨异步边界。
+ * @param blobPromise 已开始生成的图片数据，复制失败时调用方仍可取回它
+ * @returns 写入成功时的 Blob，失败返回 null
+ */
+async function copyImage(blobPromise: Promise<Blob>): Promise<Blob | null> {
+	if (!canWriteClipboard()) return null;
+	let written: Promise<boolean>;
+	try {
+		written = navigator.clipboard.write([new ClipboardItem({ 'image/png': blobPromise })]).then(
+			() => true,
+			() => false
+		);
+	} catch {
+		// 老版本 Chromium 不接受 Promise 作为 ClipboardItem 的值，交给调用方重试
+		return null;
+	}
+	try {
+		const [ok, blob] = await Promise.all([written, blobPromise]);
+		return ok ? blob : null;
+	} catch {
+		return null;
+	}
+}
+
+/** 不支持 Promise 值时的兜底：Blob 就绪后再写一次（Chromium 不要求手势，仍可成功） */
+async function writeBlob(blob: Blob): Promise<boolean> {
+	if (!canWriteClipboard()) return false;
+	try {
+		await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 async function onConfirm(): Promise<void> {
 	if (state.capturing) return;
 	// 完成时把输入中的文字一并落地，而不是只提交文字
 	if (state.textEditing) commitText();
-	if (!state.sel) return;
-	const blob = await exportBlob();
-	if (!blob) {
+	const canvas = renderOutput();
+	if (!canvas) return;
+	// 从这里到 clipboard.write 之间不能有 await，否则 Safari 会认为用户手势已结束
+	const blobPromise = canvasToBlob(canvas);
+	const copied = await copyImage(blobPromise);
+	if (copied) {
+		emit('success', { mode: 'clipboard', blob: copied });
+		close();
+		return;
+	}
+	let blob: Blob;
+	try {
+		blob = await blobPromise;
+	} catch {
 		emit('error', { stage: 'clipboard', message: '截图合成失败' });
 		return;
 	}
-	const copied = await copyImage(blob);
-	if (!copied) downloadBlob(blob);
-	emit('success', { mode: copied ? 'clipboard' : 'download', blob });
+	const retried = await writeBlob(blob);
+	if (!retried) downloadBlob(blob);
+	emit('success', { mode: retried ? 'clipboard' : 'download', blob });
 	close();
 }
 
 async function onDownload(): Promise<void> {
 	// 输入中的文字先落地，下载结果才包含它
 	if (state.textEditing) commitText();
-	if (!state.sel) return;
-	const blob = await exportBlob();
-	if (!blob) {
+	const canvas = renderOutput();
+	if (!canvas) return;
+	let blob: Blob;
+	try {
+		blob = await canvasToBlob(canvas);
+	} catch {
 		emit('error', { stage: 'capture', message: '截图合成失败' });
 		return;
 	}

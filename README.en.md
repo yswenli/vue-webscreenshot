@@ -15,6 +15,12 @@
   <strong><a href="./README.md">简体中文</a></strong>
 </p>
 
+<p align="center">
+  <img src="./demo.png" alt="vue-webscreenshot demo: selecting a region on a web page and adding rectangle and arrow annotations" width="720">
+</p>
+
+<p align="center"><sub>Select a region, annotate with rectangles / arrows, then copy or download in one click</sub></p>
+
 ---
 
 ## Why this component?
@@ -46,7 +52,7 @@ Adding a "screenshot feedback" feature usually drags in a screenshot library, ba
 
 ## Requirements
 
-- **Chromium-based browsers only** (Chrome / Edge / 360 Speed mode); Firefox and Safari are not adapted.
+- Supports **Chromium-based browsers** (Chrome / Edge / 360 Speed mode) and **macOS Safari 13+**; Firefox is not adapted, and iOS / iPadOS Safari does not expose `getDisplayMedia`, so it reports "unsupported".
 - Must run in a **secure context**: `https` or `localhost` / `127.0.0.1`. Screenshot capture is disabled by the browser on `http` pages served over LAN IPs.
 - The first trigger shows the system screen-share dialog, letting the user choose what to capture (this tab / window / entire screen). That is a browser mechanism, not a component defect.
 
