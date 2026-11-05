@@ -7,6 +7,7 @@
   <a href="https://github.com/yswenli/vue-webscreenshot/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@yswenli%2Fvue-webscreenshot" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/Vue-3.2+-42b883" alt="Vue 3.2+">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178c6" alt="TypeScript">
+  <img src="https://img.shields.io/badge/Browsers-Chrome%20%7C%20Edge%20%7C%20Safari%2013%2B-1f6feb" alt="Browsers: Chrome / Edge / Safari 13+">
   <a href="https://github.com/yswenli/vue-webscreenshot"><img src="https://img.shields.io/badge/GitHub-yswenli%2Fvue-webscreenshot-181717?logo=github" alt="GitHub"></a>
 </p>
 
@@ -29,6 +30,7 @@
 
 - **零后端**：`getDisplayMedia` 抓屏 + Canvas 合成，全部发生在用户浏览器里，没有任何网络请求。
 - **即插即用**：一个 `<WebScreenshot />` 标签，`v-model:show` 控制开关，三行代码接入。
+- **跨浏览器**：Chrome / Edge / 360 极速模式与 macOS Safari 13+ 共用一套实现，Safari 对剪贴板写入的手势限制已在组件内处理。
 - **对齐微信截图**：方框、椭圆、箭头、画笔、马赛克、文字六种标注，粗细 + 六色色板，撤销一步到位。
 - **纯本地 & 隐私安全**：截图内容绝不出浏览器，天然适合隐私敏感的业务（客服工单、Bug 反馈、设计走查）。
 - **清晰锐利**：按设备像素比（DPR）高清渲染，标注成品不糊。
@@ -43,18 +45,21 @@
 | ✏️ 六种标注 | 方框 / 椭圆 / 箭头 / 画笔 / 马赛克 / 文字 |
 | 🎨 精细控制 | 粗细三档（画笔/图形）· 六色色板 · 马赛克块大小 |
 | ⏪ 撤销 | `Ctrl / Cmd + Z` 或工具栏按钮，一步撤销 |
-| 📋 一键复制 | 优先写入剪贴板，浏览器不支持时自动降级为下载 |
+| 📋 一键复制 | 优先写入剪贴板，浏览器不支持时自动降级为下载；已适配 Safari 的手势要求 |
 | 💾 命名下载 | 文件名自动带时间戳，如 `网页截图-20261104-153000.png` |
 | 🧩 低耦合 | `Teleport` 挂到 body，`z-index` 可配，不污染宿主布局 |
 | 🔤 智能文字 | 输入框随内容自动增高，落字与预览**完全重合**、支持多行与换行 |
 | 📐 箭头保向 | 保留拖拽方向，八个方向都指向松开鼠标的位置 |
 | 📱 自适应 | 窗口尺寸变化时自动重排，选区与标注不失位 |
+| 🌐 浏览器兼容 | Chromium 系与 macOS Safari 13+ 开箱即用，Safari 16+ 可共享单个窗口 |
 
 ## 环境要求
 
-- 支持 **Chromium 系**浏览器（Chrome / Edge / 360 极速模式）与 **macOS Safari 13+**；Firefox 未做适配，iOS / iPadOS Safari 不提供 `getDisplayMedia`，会走「不支持」提示。
+- 支持 **Chromium 系**浏览器（Chrome / Edge / 360 极速模式）与 **macOS Safari 13+**（1.1.0 起正式支持）；Firefox 未做适配，iOS / iPadOS Safari 不提供 `getDisplayMedia`，会走「不支持」提示。
 - 必须在**安全上下文**中运行：`https` 或 `localhost` / `127.0.0.1`。局域网 IP 的 `http` 页面会被浏览器禁用抓屏。
-- 首次点击会弹出系统共享授权框，由用户选择抓取范围（当前标签页 / 窗口 / 整个屏幕）。这是浏览器机制，非组件缺陷。
+- 首次点击会弹出系统的屏幕共享面板：Chrome 可选当前标签页 / 窗口 / 整个屏幕，Safari 由 macOS 共享面板选择整屏或窗口（Safari 16+ 支持共享单个窗口）。这是浏览器机制，非组件缺陷。
+- macOS 需在「系统设置 → 隐私与安全性 → 屏幕录制」中允许浏览器录屏，首次使用时按系统提示授权即可。
+- 复制依赖 Async Clipboard API。Safari 要求写入发生在用户点击的手势内，组件自 1.1.0 起按此实现；若浏览器仍然拒绝（例如页面失焦、非安全上下文），会自动降级为下载。
 
 ## 安装
 
@@ -129,6 +134,8 @@ function onSuccess(payload: { mode: 'clipboard' | 'download'; blob: Blob }) {
 
 文字输入框随内容自动增高，提交后按输入框内实际排版落字（含换行），位置与输入框里看到的一致、不会跳位；点击画布其它位置、切换工具、撤销/下载/完成都会先提交正在输入的文字。
 
+Safari 上点「完成」同样优先复制，只有剪贴板被系统或浏览器策略拒绝时才会改为下载。
+
 ## 已知限制
 
 保持透明，方便你评估是否适用：
@@ -138,6 +145,8 @@ function onSuccess(payload: { mode: 'clipboard' | 'download'; blob: Blob }) {
 - 标注统一裁在选区内，文字超过选区下边缘的部分会被裁掉。
 - 框选定稿后不能拖边角调整大小，要重框请点「取消」重新进入。
 - 抓屏内容是用户授权共享的画面，不保证等于当前页面。
+- iOS / iPadOS Safari 没有 `getDisplayMedia`，无法抓屏；移动端请改用系统截图或其他端。
+- Safari 的共享源由 macOS 系统面板决定，不能像 Chrome 那样用参数预先指定标签页或窗口。
 
 ## 本地开发
 

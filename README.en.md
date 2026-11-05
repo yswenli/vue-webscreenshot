@@ -7,6 +7,7 @@
   <a href="https://github.com/yswenli/vue-webscreenshot/blob/main/LICENSE"><img src="https://img.shields.io/npm/l/@yswenli%2Fvue-webscreenshot" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/Vue-3.2+-42b883" alt="Vue 3.2+">
   <img src="https://img.shields.io/badge/TypeScript-strict-3178c6" alt="TypeScript">
+  <img src="https://img.shields.io/badge/Browsers-Chrome%20%7C%20Edge%20%7C%20Safari%2013%2B-1f6feb" alt="Browsers: Chrome / Edge / Safari 13+">
   <a href="https://github.com/yswenli/vue-webscreenshot"><img src="https://img.shields.io/badge/GitHub-yswenli%2Fvue-webscreenshot-181717?logo=github" alt="GitHub"></a>
 </p>
 
@@ -29,6 +30,7 @@ Adding a "screenshot feedback" feature usually drags in a screenshot library, ba
 
 - **Zero backend**: `getDisplayMedia` capture + Canvas composition, all inside the user's browser — no network requests at all.
 - **Plug & play**: a single `<WebScreenshot />` tag, controlled with `v-model:show`; three lines of code to integrate.
+- **Cross-browser**: Chrome / Edge / 360 Speed mode and macOS Safari 13+ share one implementation; Safari's clipboard gesture restriction is handled inside the component.
 - **WeChat-screenshot experience**: six annotation tools — rectangle, ellipse, arrow, brush, mosaic and text — with thickness presets, a six-color palette and one-step undo.
 - **Local & privacy-safe**: the captured image never leaves the browser, ideal for privacy-sensitive workflows (support tickets, bug reports, design walkthroughs).
 - **Crisp & sharp**: rendered at device-pixel-ratio (DPR) resolution, so annotations stay clean at full quality.
@@ -43,18 +45,21 @@ Adding a "screenshot feedback" feature usually drags in a screenshot library, ba
 | ✏️ Six annotations | Rectangle / Ellipse / Arrow / Brush / Mosaic / Text |
 | 🎨 Fine control | Three thickness levels (shapes/brush) · six-color palette · mosaic block size |
 | ⏪ Undo | `Ctrl / Cmd + Z` or the toolbar button — one step back |
-| 📋 One-click copy | Writes to clipboard first, falls back to download when unsupported |
+| 📋 One-click copy | Writes to clipboard first, falls back to download when unsupported; Safari's gesture requirement is handled |
 | 💾 Timestamped download | Auto-named files like `screenshot-20261104-153000.png` |
 | 🧩 Low coupling | `Teleport` to body, configurable `z-index`, no host-layout pollution |
 | 🔤 Smart text | Input box auto-grows, final text lands **exactly where it previews**, multi-line with wrap |
 | 📐 Directional arrows | Preserves the drag direction — all eight directions point where you released |
 | 📱 Responsive | Re-lays out on window resize; selection and annotations stay in place |
+| 🌐 Browser support | Works out of the box on Chromium-based browsers and macOS Safari 13+; Safari 16+ can share a single window |
 
 ## Requirements
 
-- Supports **Chromium-based browsers** (Chrome / Edge / 360 Speed mode) and **macOS Safari 13+**; Firefox is not adapted, and iOS / iPadOS Safari does not expose `getDisplayMedia`, so it reports "unsupported".
+- Supports **Chromium-based browsers** (Chrome / Edge / 360 Speed mode) and **macOS Safari 13+** (officially supported since 1.1.0); Firefox is not adapted, and iOS / iPadOS Safari does not expose `getDisplayMedia`, so it reports "unsupported".
 - Must run in a **secure context**: `https` or `localhost` / `127.0.0.1`. Screenshot capture is disabled by the browser on `http` pages served over LAN IPs.
-- The first trigger shows the system screen-share dialog, letting the user choose what to capture (this tab / window / entire screen). That is a browser mechanism, not a component defect.
+- The first trigger opens the system screen-share panel: Chrome lets you pick the current tab / a window / the entire screen, while Safari uses the macOS panel to pick a screen or a window (single-window sharing requires Safari 16+). That is a browser mechanism, not a component defect.
+- On macOS, allow the browser under "System Settings → Privacy & Security → Screen Recording"; the system prompts for it on first use.
+- Copying relies on the Async Clipboard API. Safari requires the write to happen inside the user's click gesture, which the component has done since 1.1.0; if the browser still refuses (for example, the page is unfocused or not in a secure context), it falls back to download automatically.
 
 ## Install
 
@@ -129,6 +134,8 @@ Toolbar: `Rectangle ｜ Ellipse ｜ Arrow ｜ Brush ｜ Mosaic ｜ Text ｜ Undo
 
 The text input box auto-grows with content; on commit, text lands according to the actual layout inside the box (including line breaks), exactly where you saw it — no shifting. Clicking elsewhere on the canvas, switching tools, undo / download / done all commit the in-progress text first.
 
+On Safari, "Done" also copies first; it only switches to download when the clipboard write is refused by the system or browser policy.
+
 ## Known limitations
 
 Kept transparent so you can judge whether it fits:
@@ -138,6 +145,8 @@ Kept transparent so you can judge whether it fits:
 - Annotations are clipped to the selection; text extending below the selection's bottom edge gets cut off.
 - After a selection is fixed you can't drag its corners to resize — click "Cancel" and re-enter to reselect.
 - The captured content is whatever the user authorized to share; it isn't guaranteed to equal the current page.
+- iOS / iPadOS Safari has no `getDisplayMedia`, so capture is unavailable there; use the system screenshot or another device.
+- On Safari the share source is controlled by the macOS panel; unlike Chrome, you can't use constraints to pre-select a tab or window.
 
 ## Local development
 
