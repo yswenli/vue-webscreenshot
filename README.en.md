@@ -31,7 +31,7 @@ Adding a "screenshot feedback" feature usually drags in a screenshot library, ba
 - **Zero backend**: `getDisplayMedia` capture + Canvas composition, all inside the user's browser — no network requests at all.
 - **Plug & play**: a single `<WebScreenshot />` tag, controlled with `v-model:show`; three lines of code to integrate.
 - **Cross-browser**: Chrome / Edge / 360 Speed mode and macOS Safari 13+ share one implementation; Safari's clipboard gesture restriction is handled inside the component.
-- **WeChat-screenshot experience**: six annotation tools — rectangle, ellipse, arrow, brush, mosaic and text — with hand-typed stroke widths, a six-color palette and one-step undo.
+- **WeChat-screenshot experience**: six annotation tools — rectangle, ellipse, arrow, brush, mosaic and text — with hand-typed sizes, color pickers, independent stroke and fill switches, and one-step undo.
 - **Local & privacy-safe**: the captured image never leaves the browser, ideal for privacy-sensitive workflows (support tickets, bug reports, design walkthroughs).
 - **Crisp & sharp**: rendered at device-pixel-ratio (DPR) resolution, so annotations stay clean at full quality.
 
@@ -44,7 +44,7 @@ Adding a "screenshot feedback" feature usually drags in a screenshot library, ba
 | 🖱 Select & capture | Grab the full screen, drag to select, live pixel size readout |
 | 🖐 Adjustable selection | Green frame + 8 resize handles once fixed; drag the region when no tool is active, annotations follow |
 | ✏️ Six annotations | Rectangle / Ellipse / Arrow / Brush / Mosaic / Text |
-| 🎨 Fine control | Stroke switch with hand-typed width from 0.1px · rectangle/ellipse fill switch and color · text outline · six-color palette · mosaic block size |
+| 🎨 Fine control | Hand-typed sizes · color pickers · stroke switch with hand-typed width from 0.1px plus stroke color · independent rectangle/ellipse fill switch and color · mosaic block size |
 | ⏪ Undo | `Ctrl / Cmd + Z` or the toolbar button — one step back; annotations, text edits, selection moves and resizes are all recorded |
 | 📋 One-click copy | Writes to clipboard first, falls back to download when unsupported; Safari's gesture requirement is handled |
 | 💾 Timestamped download | Auto-named files like `screenshot-20261104-153000.png` |
@@ -134,16 +134,16 @@ function onSuccess(payload: { mode: 'clipboard' | 'download'; blob: Blob }) {
 
 Toolbar: `Rectangle ｜ Ellipse ｜ Arrow ｜ Brush ｜ Mosaic ｜ Text ｜ Undo ｜ Download ｜ Cancel ｜ Done`. Selecting a drawing tool expands a secondary toolbar:
 
-- Rectangle / Ellipse: a `Stroke` switch + hand-typed width + six stroke colors, plus a `Fill` switch + six fill colors;
-- Arrow / Brush: a `Stroke` switch + hand-typed width + six stroke colors;
-- Mosaic: three block sizes;
-- Text: font size, text color, and the same `Stroke` switch + hand-typed width + six outline colors as the shapes.
+- Rectangle / Ellipse: hand-typed `Size` line width, a `Color` picker, and a `Stroke` switch + hand-typed width + stroke color, plus a `Fill` switch + fill color;
+- Arrow / Brush: hand-typed `Size` line width, a `Color` picker, and a `Stroke` switch + hand-typed width + stroke color;
+- Mosaic: hand-typed block size;
+- Text: a font-size dropdown (default `12`), a text color picker, and a `Stroke` switch + hand-typed width + stroke color.
 
-The stroke width is typed by hand with a `0.1px` minimum: enter fine lines such as `0.3` or `1.5` directly, or nudge by `0.1` with the arrow keys. Stroke widths scale with the export ratio but never with the selection. The default is a 2px red stroke with no fill; text has no outline by default and starts at a 1px white outline when enabled. Turning off the stroke on a rectangle/ellipse leaves only the fill; turning off both produces no annotation. Turning off the stroke on an arrow/brush also skips drawing.
+Every tool is organized as three groups — size, color and stroke — with an extra fill group on rectangles/ellipses. All sizes are hand-typed with a `0.1px` minimum (arrow keys nudge by `0.1`); font size uses a dropdown, while every other size accepts fine lines such as `0.3` or `1.5` directly. The main body (line, text or mosaic block) is always drawn; the stroke is an optional outer ring that starts at `0.1px` white, scales with the export ratio, and never scales with the selection. Shapes default to a 2px red body with no stroke and no fill; text defaults to 12px with no stroke.
 
 The text input box auto-grows with content. `Enter` inserts a new line; `Ctrl / Cmd + Enter` or clicking outside the box confirms. On commit, text lands according to the actual layout inside the box (including line breaks), exactly where you saw it — no shifting. Switching tools, undo / download / done also commit the in-progress text first. With the Text tool still active, clicking existing text reopens it in place with its original content and style, so you can change the text, size, color, or outline; clearing the content and confirming deletes it, and all of these edits are undoable.
 
-Once the selection is fixed, a green frame with 8 handles (four corners + four edge midpoints) appears outside it: drag a handle or an edge to resize, and the size readout in the top-left updates live. When no annotation tool is active, dragging inside the selection moves it as a whole, and existing annotations follow the move or scale proportionally with it (stroke width and font size stay unchanged). With a tool active, dragging inside draws annotations again — click the active tool once more to deselect it and move the selection. Both moves and resizes go into the undo stack, so `Ctrl / Cmd + Z` steps back to the previous position and size.
+Once the selection is fixed, a green frame with 8 handles (four corners + four edge midpoints) appears outside it: drag a handle or an edge to resize, and the size readout in the top-left updates live. When no annotation tool is active, dragging inside the selection moves it as a whole, and existing annotations follow the move or scale proportionally with it (body sizes and stroke widths stay unchanged). With a tool active, dragging inside draws annotations again — click the active tool once more to deselect it and move the selection. Both moves and resizes go into the undo stack, so `Ctrl / Cmd + Z` steps back to the previous position and size.
 
 On Safari, "Done" also copies first; it only switches to download when the clipboard write is refused by the system or browser policy.
 
@@ -151,7 +151,7 @@ On Safari, "Done" also copies first; it only switches to download when the clipb
 
 Kept transparent so you can judge whether it fits:
 
-- No window/element auto-snapping, no magnifier, no color picker, no scrollable long screenshots.
+- No window/element auto-snapping, no magnifier, no screen eyedropper, no scrollable long screenshots.
 - Only text annotations can be re-edited (click existing text with the Text tool active); other annotations can't be individually selected, dragged, or deleted — only whole-undo, though they do move and scale along with the selection.
 - Annotations are clipped to the selection; text extending below the selection's bottom edge gets cut off.
 - The captured content is whatever the user authorized to share; it isn't guaranteed to equal the current page.

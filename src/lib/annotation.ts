@@ -13,15 +13,21 @@ export interface Rect {
 export type ToolType = 'rect' | 'ellipse' | 'arrow' | 'brush' | 'mosaic' | 'text';
 
 /**
- * 所有工具共用同一套描边模型：
- * `strokeWidth` 是描边宽度（0 表示不描边），`strokeColor` 是描边颜色。
- * 矩形/椭圆/箭头/画笔的线条色、文字的外描边都走这两个字段。
+ * 所有工具都分「主体 + 描边」两层：
+ * - `width` / `color` 是主体：图形线宽与线条色、文字字号与文字色、马赛克块大小；
+ * - `strokeWidth` / `strokeColor` 是主体外围的描边：文字外描边、图形线条外圈，
+ *   `strokeWidth` 为 0 表示不描边。
+ * 矩形 / 椭圆另有独立的填充层。
  */
 interface BaseOp {
 	type: ToolType;
-	/** 描边宽度，CSS 像素；0 表示不描边。图形线宽与文字描边宽度共用 */
+	/** 主体尺寸，CSS 像素：图形线宽、文字字号或马赛克块大小 */
+	width: number;
+	/** 主体颜色：图形线条色 / 文字颜色；马赛克不使用 */
+	color: string;
+	/** 外圈描边宽度，CSS 像素；0 表示不描边 */
 	strokeWidth: number;
-	/** 描边颜色。图形线条色与文字描边色共用 */
+	/** 外圈描边颜色 */
 	strokeColor: string;
 }
 
@@ -33,12 +39,10 @@ export interface RectShapeOp extends BaseOp {
 	fill: string | null;
 }
 
-/** 马赛克；按 blockSize 采样，不参与描边 */
+/** 马赛克；按 width 采样，块大小就是主体尺寸 */
 export interface MosaicOp extends BaseOp {
 	type: 'mosaic';
 	rect: Rect;
-	/** 马赛克块大小，单位 CSS 像素 */
-	blockSize: number;
 }
 
 /** 箭头必须保留起止顺序：归一化成矩形会丢掉方向，画出来会指向反方向 */
@@ -58,10 +62,6 @@ export interface TextOp extends BaseOp {
 	x: number;
 	y: number;
 	text: string;
-	/** 文字颜色 */
-	color: string;
-	/** 字号，单位 CSS 像素 */
-	fontSize: number;
 }
 
 export type AnnotationOp = RectShapeOp | MosaicOp | ArrowOp | BrushOp | TextOp;
@@ -185,36 +185,56 @@ function drawOp(ctx: CanvasRenderingContext2D, op: AnnotationOp, opt: DrawOption
 	}
 }
 
-/** 描边宽度换算到目标画布像素；0 表示不描边，最小按 0.1px 绘制以保留细线 */
+/** 主体尺寸换算到目标画布像素；最小按 0.1px 绘制，保留手输的细线 */
+function mainWidthOf(op: BaseOp, opt: DrawOption): number {
+	return Math.max(0.1, op.width * opt.widthScale);
+}
+
+/** 外圈描边宽度换算到目标画布像素；0 表示不描边 */
 function strokeWidthOf(op: BaseOp, opt: DrawOption): number {
 	return op.strokeWidth > 0 ? Math.max(0.1, op.strokeWidth * opt.widthScale) : 0;
 }
 
 function drawRectShape(ctx: CanvasRenderingContext2D, op: RectShapeOp, opt: DrawOption): void {
-	const lineWidth = strokeWidthOf(op, opt);
+	const main = mainWidthOf(op, opt);
+	const outline = strokeWidthOf(op, opt);
 	const fill = op.fill || null;
-	// 描边与填充都关掉时什么都不画
-	if (!lineWidth && !fill) return;
 	const x = opt.offsetX + op.rect.x * opt.scale;
 	const y = opt.offsetY + op.rect.y * opt.scale;
 	const w = op.rect.w * opt.scale;
 	const h = op.rect.h * opt.scale;
 	ctx.save();
-	if (fill) ctx.fillStyle = fill;
-	if (lineWidth) {
-		ctx.strokeStyle = op.strokeColor;
-		ctx.lineWidth = lineWidth;
-		ctx.lineCap = 'round';
-		ctx.lineJoin = 'round';
-	}
+	ctx.lineCap = 'round';
+	ctx.lineJoin = 'round';
 	if (op.type === 'rect') {
-		if (fill) ctx.fillRect(x, y, w, h);
-		if (lineWidth) ctx.strokeRect(x, y, w, h);
+		if (fill) {
+			ctx.fillStyle = fill;
+			ctx.fillRect(x, y, w, h);
+		}
+		// 先画外圈再画主体：外圈被主体盖住内侧，只留下外侧一圈
+		if (outline) {
+			ctx.strokeStyle = op.strokeColor;
+			ctx.lineWidth = main + outline * 2;
+			ctx.strokeRect(x, y, w, h);
+		}
+		ctx.strokeStyle = op.color;
+		ctx.lineWidth = main;
+		ctx.strokeRect(x, y, w, h);
 	} else {
 		ctx.beginPath();
 		ctx.ellipse(x + w / 2, y + h / 2, Math.max(w / 2, 0.5), Math.max(h / 2, 0.5), 0, 0, Math.PI * 2);
-		if (fill) ctx.fill();
-		if (lineWidth) ctx.stroke();
+		if (fill) {
+			ctx.fillStyle = fill;
+			ctx.fill();
+		}
+		if (outline) {
+			ctx.strokeStyle = op.strokeColor;
+			ctx.lineWidth = main + outline * 2;
+			ctx.stroke();
+		}
+		ctx.strokeStyle = op.color;
+		ctx.lineWidth = main;
+		ctx.stroke();
 	}
 	ctx.restore();
 }
@@ -223,8 +243,8 @@ function drawRectShape(ctx: CanvasRenderingContext2D, op: RectShapeOp, opt: Draw
 const ARROW_HEAD_ANGLE = Math.PI / 7;
 
 function drawArrow(ctx: CanvasRenderingContext2D, op: ArrowOp, opt: DrawOption): void {
-	const lineWidth = strokeWidthOf(op, opt);
-	if (!lineWidth) return;
+	const main = mainWidthOf(op, opt);
+	const outline = strokeWidthOf(op, opt);
 	const x1 = opt.offsetX + op.from.x * opt.scale;
 	const y1 = opt.offsetY + op.from.y * opt.scale;
 	const x2 = opt.offsetX + op.to.x * opt.scale;
@@ -234,42 +254,70 @@ function drawArrow(ctx: CanvasRenderingContext2D, op: ArrowOp, opt: DrawOption):
 	const length = Math.hypot(dx, dy);
 	if (length < 0.5) return;
 	// 头部长度不超过箭杆的一半，否则短箭头的三角会翻出起点、画成反向
-	const head = Math.min(Math.max(10 * opt.widthScale, lineWidth * 3.5), length * 0.5);
+	const head = Math.min(Math.max(10 * opt.widthScale, main * 3.5), length * 0.5);
 	const angle = Math.atan2(dy, dx);
+	// 箭杆止于三角根部，避免粗线从尖端穿出
+	const shaftX = x2 - head * Math.cos(angle);
+	const shaftY = y2 - head * Math.sin(angle);
+	const leftX = x2 - head * Math.cos(angle - ARROW_HEAD_ANGLE);
+	const leftY = y2 - head * Math.sin(angle - ARROW_HEAD_ANGLE);
+	const rightX = x2 - head * Math.cos(angle + ARROW_HEAD_ANGLE);
+	const rightY = y2 - head * Math.sin(angle + ARROW_HEAD_ANGLE);
 	ctx.save();
-	ctx.strokeStyle = op.strokeColor;
-	ctx.fillStyle = op.strokeColor;
-	ctx.lineWidth = lineWidth;
 	ctx.lineCap = 'round';
 	ctx.lineJoin = 'round';
-	// 箭杆止于三角根部，避免粗线从尖端穿出
+	if (outline) {
+		// 外圈：先按「主体 + 两侧描边」描一遍箭杆与三角，再让主体压在上面
+		ctx.strokeStyle = op.strokeColor;
+		ctx.lineWidth = main + outline * 2;
+		ctx.beginPath();
+		ctx.moveTo(x1, y1);
+		ctx.lineTo(shaftX, shaftY);
+		ctx.stroke();
+		ctx.lineWidth = outline * 2;
+		ctx.beginPath();
+		ctx.moveTo(x2, y2);
+		ctx.lineTo(leftX, leftY);
+		ctx.lineTo(rightX, rightY);
+		ctx.closePath();
+		ctx.stroke();
+	}
+	ctx.strokeStyle = op.color;
+	ctx.fillStyle = op.color;
+	ctx.lineWidth = main;
 	ctx.beginPath();
 	ctx.moveTo(x1, y1);
-	ctx.lineTo(x2 - head * Math.cos(angle), y2 - head * Math.sin(angle));
+	ctx.lineTo(shaftX, shaftY);
 	ctx.stroke();
 	ctx.beginPath();
 	ctx.moveTo(x2, y2);
-	ctx.lineTo(x2 - head * Math.cos(angle - ARROW_HEAD_ANGLE), y2 - head * Math.sin(angle - ARROW_HEAD_ANGLE));
-	ctx.lineTo(x2 - head * Math.cos(angle + ARROW_HEAD_ANGLE), y2 - head * Math.sin(angle + ARROW_HEAD_ANGLE));
+	ctx.lineTo(leftX, leftY);
+	ctx.lineTo(rightX, rightY);
 	ctx.closePath();
 	ctx.fill();
 	ctx.restore();
 }
 
 function drawBrush(ctx: CanvasRenderingContext2D, op: BrushOp, opt: DrawOption): void {
-	const lineWidth = strokeWidthOf(op, opt);
-	if (!lineWidth) return;
+	const main = mainWidthOf(op, opt);
+	const outline = strokeWidthOf(op, opt);
 	const points = op.points;
 	if (!points.length) return;
 	ctx.save();
-	ctx.strokeStyle = op.strokeColor;
-	ctx.fillStyle = op.strokeColor;
-	ctx.lineWidth = lineWidth;
 	ctx.lineCap = 'round';
 	ctx.lineJoin = 'round';
 	if (points.length === 1) {
+		const cx = opt.offsetX + points[0].x * opt.scale;
+		const cy = opt.offsetY + points[0].y * opt.scale;
+		if (outline) {
+			ctx.fillStyle = op.strokeColor;
+			ctx.beginPath();
+			ctx.arc(cx, cy, main / 2 + outline, 0, Math.PI * 2);
+			ctx.fill();
+		}
+		ctx.fillStyle = op.color;
 		ctx.beginPath();
-		ctx.arc(opt.offsetX + points[0].x * opt.scale, opt.offsetY + points[0].y * opt.scale, lineWidth / 2, 0, Math.PI * 2);
+		ctx.arc(cx, cy, main / 2, 0, Math.PI * 2);
 		ctx.fill();
 		ctx.restore();
 		return;
@@ -279,12 +327,19 @@ function drawBrush(ctx: CanvasRenderingContext2D, op: BrushOp, opt: DrawOption):
 	for (let i = 1; i < points.length; i++) {
 		ctx.lineTo(opt.offsetX + points[i].x * opt.scale, opt.offsetY + points[i].y * opt.scale);
 	}
+	if (outline) {
+		ctx.strokeStyle = op.strokeColor;
+		ctx.lineWidth = main + outline * 2;
+		ctx.stroke();
+	}
+	ctx.strokeStyle = op.color;
+	ctx.lineWidth = main;
 	ctx.stroke();
 	ctx.restore();
 }
 
 function drawText(ctx: CanvasRenderingContext2D, op: TextOp, opt: DrawOption): void {
-	const fontPx = Math.max(6, op.fontSize * opt.widthScale);
+	const fontPx = Math.max(6, op.width * opt.widthScale);
 	// 描边宽度与字号独立，同样随导出倍率放大，但不受选区缩放影响
 	const strokePx = strokeWidthOf(op, opt);
 	const x = opt.offsetX + op.x * opt.scale;
@@ -314,7 +369,7 @@ function drawMosaic(ctx: CanvasRenderingContext2D, op: MosaicOp, opt: DrawOption
 	const w = op.rect.w * opt.scale;
 	const h = op.rect.h * opt.scale;
 	if (w < 1 || h < 1) return;
-	const block = Math.max(2, op.blockSize * opt.widthScale);
+	const block = Math.max(2, op.width * opt.widthScale);
 	const cols = Math.max(1, Math.round(w / block));
 	const rows = Math.max(1, Math.round(h / block));
 	const small = getScratch(cols, rows);

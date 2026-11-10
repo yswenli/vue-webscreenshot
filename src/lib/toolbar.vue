@@ -18,52 +18,50 @@
 			<button type="button" class="vws-tb__btn is-primary" title="完成 (Enter)" v-html="icons.check" @click="emit('confirm')" />
 		</div>
 		<div v-if="modelValue" class="vws-tb__options">
-			<!-- 马赛克：只有块大小 -->
-			<template v-if="modelValue === 'mosaic'">
-				<span class="vws-tb__label">块大小</span>
-				<button
-					v-for="w in widths"
-					:key="`mosaic-${w}`"
-					type="button"
-					class="vws-tb__dot"
-					:class="{ 'is-active': width === w }"
-					:title="`块大小 ${w}`"
-					@click="emit('update:width', w)"
-				>
-					<span :style="dotStyle(w)" />
-				</button>
+			<!-- 主体大小：文字用下拉，其余一律手输 -->
+			<span class="vws-tb__label">{{ sizeLabel }}</span>
+			<select
+				v-if="modelValue === 'text'"
+				class="vws-tb__select"
+				:value="String(width)"
+				:title="`字号 ${width}px`"
+				@pointerdown.stop
+				@change="onFontSizeChange"
+			>
+				<option v-for="s in fontSizes" :key="s" :value="String(s)">{{ s }}</option>
+			</select>
+			<template v-else>
+				<input
+					class="vws-tb__num"
+					type="number"
+					min="0.1"
+					step="0.1"
+					inputmode="decimal"
+					:value="sizeField.draft.value"
+					:title="`${sizeLabel}，可直接输入`"
+					@pointerdown.stop
+					@input="sizeField.onInput"
+					@change="sizeField.onCommit"
+					@blur="sizeField.onCommit"
+				/>
+				<span class="vws-tb__unit">px</span>
 			</template>
 
-			<template v-else>
-				<!-- 文字：字号 + 文字颜色 -->
-				<template v-if="modelValue === 'text'">
-					<button
-						v-for="s in fontSizes"
-						:key="s"
-						type="button"
-						class="vws-tb__size"
-						:class="{ 'is-active': width === s }"
-						:title="`字号 ${s}`"
-						@click="emit('update:width', s)"
-					>
-						{{ s }}
-					</button>
-					<span class="vws-tb__sep" />
-					<button
-						v-for="c in colors"
-						:key="`text-${c}`"
-						type="button"
-						class="vws-tb__color"
-						:class="{ 'is-active': color === c }"
-						:title="`文字色 ${c}`"
-						@click="emit('update:color', c)"
-					>
-						<span :style="{ background: c }" />
-					</button>
-					<span class="vws-tb__sep" />
-				</template>
+			<template v-if="modelValue !== 'mosaic'">
+				<!-- 主体颜色 -->
+				<span class="vws-tb__sep" />
+				<span class="vws-tb__label">颜色</span>
+				<input
+					class="vws-tb__pick"
+					type="color"
+					:value="color"
+					:title="`颜色 ${color}`"
+					@pointerdown.stop
+					@input="onColorPick"
+				/>
 
-				<!-- 描边：文字、矩形、椭圆、箭头、画笔共用同一套开关 + 手输宽度 + 颜色 -->
+				<!-- 描边：开关 + 手输宽度 + 颜色 -->
+				<span class="vws-tb__sep" />
 				<span class="vws-tb__label">描边</span>
 				<button
 					type="button"
@@ -83,56 +81,49 @@
 						min="0.1"
 						step="0.1"
 						inputmode="decimal"
-						:value="strokeDraft"
-						:title="`描边宽度，0.1px 起，可直接输入`"
+						:value="strokeField.draft.value"
+						title="描边宽度，0.1px 起，可直接输入"
 						@pointerdown.stop
-						@input="onStrokeWidthInput"
-						@change="commitStrokeWidth"
-						@blur="commitStrokeWidth"
+						@input="strokeField.onInput"
+						@change="strokeField.onCommit"
+						@blur="strokeField.onCommit"
 					/>
 					<span class="vws-tb__unit">px</span>
-					<button
-						v-for="c in colors"
-						:key="`stroke-${c}`"
-						type="button"
-						class="vws-tb__color"
-						:class="{ 'is-active': strokeColorValue === c }"
-						:title="`描边色 ${c}`"
-						@click="pickStrokeColor(c)"
-					>
-						<span :style="{ background: c }" />
-					</button>
+					<input
+						class="vws-tb__pick"
+						type="color"
+						:value="strokeColor"
+						:title="`描边色 ${strokeColor}`"
+						@pointerdown.stop
+						@input="onStrokeColorPick"
+					/>
 				</template>
+			</template>
 
-				<!-- 矩形 / 椭圆：填充 -->
-				<template v-if="showFill">
-					<span class="vws-tb__sep" />
-					<span class="vws-tb__label">填充</span>
-					<button
-						type="button"
-						class="vws-tb__switch"
-						:class="{ 'is-on': fillEnabled }"
-						role="switch"
-						:aria-checked="fillEnabled"
-						:title="fillEnabled ? '关闭填充' : '开启填充'"
-						@click="emit('update:fillEnabled', !fillEnabled)"
-					>
-						<span class="vws-tb__knob" />
-					</button>
-					<template v-if="fillEnabled">
-						<button
-							v-for="c in fillColors"
-							:key="`fill-${c}`"
-							type="button"
-							class="vws-tb__color"
-							:class="{ 'is-active': fillColor === c }"
-							:title="`填充色 ${c}`"
-							@click="emit('update:fillColor', c)"
-						>
-							<span :style="{ background: c }" />
-						</button>
-					</template>
-				</template>
+			<!-- 矩形 / 椭圆：填充 -->
+			<template v-if="showFill">
+				<span class="vws-tb__sep" />
+				<span class="vws-tb__label">填充</span>
+				<button
+					type="button"
+					class="vws-tb__switch"
+					:class="{ 'is-on': fillEnabled }"
+					role="switch"
+					:aria-checked="fillEnabled"
+					:title="fillEnabled ? '关闭填充' : '开启填充'"
+					@click="emit('update:fillEnabled', !fillEnabled)"
+				>
+					<span class="vws-tb__knob" />
+				</button>
+				<input
+					v-if="fillEnabled"
+					class="vws-tb__pick"
+					type="color"
+					:value="fillColor"
+					:title="`填充色 ${fillColor}`"
+					@pointerdown.stop
+					@input="onFillColorPick"
+				/>
 			</template>
 		</div>
 	</div>
@@ -143,17 +134,15 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { icons } from './icons';
 import type { Rect, ToolType } from './annotation';
 
-const COLORS = ['#ff4d4f', '#ffd400', '#22c55e', '#1677ff', '#111111', '#ffffff'];
-
 const props = defineProps<{
 	modelValue: ToolType | null;
+	/** 主体尺寸：图形线宽、文字字号或马赛克块大小 */
 	width: number;
-	widths: number[];
-	/** 文字工具的字号档位 */
+	/** 文字工具的字号下拉档位 */
 	fontSizes: number[];
 	/** 描边宽度，CSS 像素；0.1 起，手输 */
 	strokeWidth: number;
-	/** 文字描边颜色；图形直接用 color 当描边色 */
+	/** 描边颜色：文字外描边 / 图形线条外圈 */
 	strokeColor: string;
 	/** 是否绘制描边 */
 	strokeEnabled: boolean;
@@ -161,8 +150,7 @@ const props = defineProps<{
 	fillEnabled: boolean;
 	/** 矩形/椭圆的填充色 */
 	fillColor: string;
-	/** 填充色档位 */
-	fillColors: string[];
+	/** 主体颜色：文字颜色 / 图形线条色 */
 	color: string;
 	anchor: Rect;
 	canUndo: boolean;
@@ -192,65 +180,82 @@ const toolItems: { key: ToolType; title: string }[] = [
 	{ key: 'text', title: '文字' }
 ];
 
-const colors = COLORS;
-
 const rootRef = ref<HTMLElement | null>(null);
 const size = reactive({ w: 0, h: 0 });
 
+const sizeLabel = computed(() => {
+	if (props.modelValue === 'text') return '字号';
+	if (props.modelValue === 'mosaic') return '块大小';
+	return '大小';
+});
+
 const showFill = computed(() => props.modelValue === 'rect' || props.modelValue === 'ellipse');
 
-/** 文字用自己的描边色，图形直接复用色板 color */
-const strokeColorValue = computed(() => (props.modelValue === 'text' ? props.strokeColor : props.color));
-
-/** 描边色对文字写文字描边色，对图形写线条色 */
-function pickStrokeColor(value: string): void {
-	if (props.modelValue === 'text') emit('update:strokeColor', value);
-	else emit('update:color', value);
-}
-
-/** 手输框里的草稿值：允许中途输入不合法内容，提交时再纠正 */
-const strokeDraft = ref(String(props.strokeWidth));
-
-watch(
-	() => props.strokeWidth,
-	(value) => {
-		const current = Number(strokeDraft.value);
-		if (!Number.isFinite(current) || Math.abs(current - value) > 1e-6) strokeDraft.value = formatStrokeWidth(value);
-	}
-);
-
-function formatStrokeWidth(value: number): string {
+function formatNumber(value: number): string {
 	return String(Math.round(value * 100) / 100);
 }
 
-/** 0.1px 起才有意义，非法输入返回 null 交给调用方回退 */
-function parseStrokeWidth(raw: string): number | null {
-	const value = Number(raw);
-	if (!Number.isFinite(value) || value < 0.1) return null;
-	return Math.round(value * 100) / 100;
-}
+/**
+ * 手输数字框：输入过程中允许出现空值 / 非法内容，失焦或回车时再纠正。
+ * 主体尺寸与描边宽度共用这套逻辑，最小值统一 0.1px。
+ */
+function useNumberField(get: () => number, set: (value: number) => void) {
+	const draft = ref(formatNumber(get()));
 
-function onStrokeWidthInput(event: Event): void {
-	strokeDraft.value = (event.target as HTMLInputElement).value;
-	const value = parseStrokeWidth(strokeDraft.value);
-	if (value !== null) emit('update:strokeWidth', value);
-}
+	watch(get, (value) => {
+		const current = Number(draft.value);
+		if (!Number.isFinite(current) || Math.abs(current - value) > 1e-6) draft.value = formatNumber(value);
+	});
 
-function commitStrokeWidth(): void {
-	const raw = Number(strokeDraft.value);
-	if (!Number.isFinite(raw)) {
-		// 空值 / 非法输入回退到当前生效值
-		strokeDraft.value = formatStrokeWidth(props.strokeWidth);
-		return;
+	function parse(raw: string): number | null {
+		if (!raw.trim()) return null;
+		const value = Number(raw);
+		if (!Number.isFinite(value)) return null;
+		return Math.max(0.1, Math.round(value * 100) / 100);
 	}
-	const value = Math.max(0.1, Math.round(raw * 100) / 100);
-	strokeDraft.value = formatStrokeWidth(value);
-	emit('update:strokeWidth', value);
+
+	function onInput(event: Event): void {
+		draft.value = (event.target as HTMLInputElement).value;
+		const value = parse(draft.value);
+		if (value !== null) set(value);
+	}
+
+	function onCommit(): void {
+		const value = parse(draft.value);
+		if (value === null) {
+			draft.value = formatNumber(get());
+			return;
+		}
+		draft.value = formatNumber(value);
+		set(value);
+	}
+
+	return { draft, onInput, onCommit };
 }
 
-function dotStyle(width: number): Record<string, string> {
-	const d = Math.max(5, Math.min(14, width * 1.5));
-	return { width: `${d}px`, height: `${d}px` };
+const sizeField = useNumberField(
+	() => props.width,
+	(value) => emit('update:width', value)
+);
+const strokeField = useNumberField(
+	() => props.strokeWidth,
+	(value) => emit('update:strokeWidth', value)
+);
+
+function onFontSizeChange(event: Event): void {
+	emit('update:width', Number((event.target as HTMLSelectElement).value));
+}
+
+function onColorPick(event: Event): void {
+	emit('update:color', (event.target as HTMLInputElement).value);
+}
+
+function onStrokeColorPick(event: Event): void {
+	emit('update:strokeColor', (event.target as HTMLInputElement).value);
+}
+
+function onFillColorPick(event: Event): void {
+	emit('update:fillColor', (event.target as HTMLInputElement).value);
 }
 
 function measure(): void {
@@ -380,53 +385,6 @@ onUnmounted(() => {
 	background: rgba(255, 255, 255, 0.22);
 }
 
-.vws-tb__dot {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 24px;
-	height: 24px;
-	padding: 0;
-	border: none;
-	border-radius: 4px;
-	background: transparent;
-	cursor: pointer;
-}
-
-.vws-tb__dot span {
-	display: block;
-	border-radius: 50%;
-	background: #fff;
-}
-
-.vws-tb__dot.is-active {
-	background: rgba(255, 255, 255, 0.22);
-}
-
-.vws-tb__size {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	min-width: 24px;
-	height: 24px;
-	padding: 0 4px;
-	border: none;
-	border-radius: 4px;
-	background: transparent;
-	color: #f2f2f2;
-	font-size: 12px;
-	line-height: 1;
-	cursor: pointer;
-}
-
-.vws-tb__size:hover {
-	background: rgba(255, 255, 255, 0.14);
-}
-
-.vws-tb__size.is-active {
-	background: rgba(255, 255, 255, 0.26);
-}
-
 .vws-tb__label {
 	color: rgba(255, 255, 255, 0.62);
 	font-size: 11px;
@@ -465,9 +423,9 @@ onUnmounted(() => {
 	transform: translateX(12px);
 }
 
-/* 描边宽度手输框：0.1px 起，隐藏原生步进箭头省空间，方向键仍可微调 */
+/* 尺寸 / 描边宽度手输框：0.1px 起，隐藏原生步进箭头省空间，方向键仍可微调 */
 .vws-tb__num {
-	width: 44px;
+	width: 46px;
 	height: 22px;
 	padding: 0 4px;
 	border: 1px solid rgba(255, 255, 255, 0.28);
@@ -493,6 +451,29 @@ onUnmounted(() => {
 	margin: 0;
 }
 
+/* 字号下拉：默认 12，暗色皮肤下选项也要可读 */
+.vws-tb__select {
+	height: 22px;
+	padding: 0 2px;
+	border: 1px solid rgba(255, 255, 255, 0.28);
+	border-radius: 4px;
+	background: rgba(255, 255, 255, 0.08);
+	color: #f2f2f2;
+	font-size: 11px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.vws-tb__select:focus {
+	outline: none;
+	border-color: #1677ff;
+}
+
+.vws-tb__select option {
+	background: #2b2b2b;
+	color: #f2f2f2;
+}
+
 .vws-tb__unit {
 	margin-left: -3px;
 	color: rgba(255, 255, 255, 0.5);
@@ -500,28 +481,33 @@ onUnmounted(() => {
 	line-height: 1;
 }
 
-.vws-tb__color {
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	width: 22px;
+/* 取色器：统一成小方块，点一下打开系统颜色面板 */
+.vws-tb__pick {
+	width: 24px;
 	height: 22px;
 	padding: 0;
-	border: none;
-	border-radius: 50%;
+	border: 1px solid rgba(255, 255, 255, 0.28);
+	border-radius: 4px;
 	background: transparent;
 	cursor: pointer;
 }
 
-.vws-tb__color span {
-	display: block;
-	width: 14px;
-	height: 14px;
-	border-radius: 50%;
-	box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+.vws-tb__pick:focus {
+	outline: none;
+	border-color: #1677ff;
 }
 
-.vws-tb__color.is-active {
-	box-shadow: 0 0 0 2px #fff;
+.vws-tb__pick::-webkit-color-swatch-wrapper {
+	padding: 2px;
+}
+
+.vws-tb__pick::-webkit-color-swatch {
+	border: none;
+	border-radius: 2px;
+}
+
+.vws-tb__pick::-moz-color-swatch {
+	border: none;
+	border-radius: 2px;
 }
 </style>
