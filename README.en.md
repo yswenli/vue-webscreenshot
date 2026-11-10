@@ -44,21 +44,21 @@ Adding a "screenshot feedback" feature usually drags in a screenshot library, ba
 | 🖱 Select & capture | Grab the full screen, drag to select, live pixel size readout |
 | 🖐 Adjustable selection | Green frame + 8 resize handles once fixed; drag the region when no tool is active, annotations follow |
 | ✏️ Six annotations | Rectangle / Ellipse / Arrow / Brush / Mosaic / Text |
-| 🎨 Fine control | Three thickness levels (shapes/brush) · six-color palette · mosaic block size |
-| ⏪ Undo | `Ctrl / Cmd + Z` or the toolbar button — one step back; annotations, selection moves and resizes are all recorded |
+| 🎨 Fine control | Three thickness levels (shapes/brush) · six-color palette · mosaic block size · text size and outline |
+| ⏪ Undo | `Ctrl / Cmd + Z` or the toolbar button — one step back; annotations, text edits, selection moves and resizes are all recorded |
 | 📋 One-click copy | Writes to clipboard first, falls back to download when unsupported; Safari's gesture requirement is handled |
 | 💾 Timestamped download | Auto-named files like `screenshot-20261104-153000.png` |
 | 🧩 Low coupling | `Teleport` to body, configurable `z-index`, no host-layout pollution |
-| 🔤 Smart text | Input box auto-grows, final text lands **exactly where it previews**, multi-line with wrap |
+| 🔤 Smart text | Input box auto-grows, final text lands **exactly where it previews**; click existing text to re-edit, multi-line with outline |
 | 📐 Directional arrows | Preserves the drag direction — all eight directions point where you released |
 | 📱 Responsive | Re-lays out on window resize; selection and annotations stay in place |
-| 🌐 Browser support | Works out of the box on Chromium-based browsers and macOS Safari 13+; Safari 16+ can share a single window |
+| 🌐 Browser support | Works out of the box on Chromium-based browsers and macOS Safari 13+; Safari 16.1+ can share a single window |
 
 ## Requirements
 
 - Supports **Chromium-based browsers** (Chrome / Edge / 360 Speed mode) and **macOS Safari 13+** (officially supported since 1.1.0); Firefox is not adapted, and iOS / iPadOS Safari does not expose `getDisplayMedia`, so it reports "unsupported".
 - Must run in a **secure context**: `https` or `localhost` / `127.0.0.1`. Screenshot capture is disabled by the browser on `http` pages served over LAN IPs.
-- The first trigger opens the system screen-share panel: Chrome lets you pick the current tab / a window / the entire screen, while Safari uses the macOS panel to pick a screen or a window (single-window sharing requires Safari 16+). That is a browser mechanism, not a component defect.
+- The first trigger opens the system screen-share panel: Chrome lets you pick the current tab / a window / the entire screen, while Safari uses the macOS panel to pick a screen or a window (single-window sharing requires Safari 16.1+ on macOS Ventura 13+). That is a browser mechanism, not a component defect.
 - On macOS, allow the browser under "System Settings → Privacy & Security → Screen Recording"; the system prompts for it on first use.
 - Copying relies on the Async Clipboard API. Safari requires the write to happen inside the user's click gesture, which the component has done since 1.1.0; if the browser still refuses (for example, the page is unfocused or not in a secure context), it falls back to download automatically.
 
@@ -123,17 +123,18 @@ function onSuccess(payload: { mode: 'clipboard' | 'download'; blob: Blob }) {
 
 | Action | Description |
 | --- | --- |
-| Drag | Select the screenshot region; drag inside the region to annotate after it's fixed |
+| Drag | Select the screenshot region; after it's fixed, drag a handle or edge to resize, drag inside with no tool active to move it, or drag inside with a tool active to annotate |
 | `Esc` | Close the text input if open; otherwise cancel and close |
-| `Ctrl / Cmd + Z` | Undo the last action (new annotation, selection move, or selection resize) |
-| `Enter` | Same as "Done"; while typing text, commits the text |
+| `Ctrl / Cmd + Z` | Undo the last action (new annotation, text edit, selection move, or selection resize) |
+| `Enter` | Same as "Done" when not typing text; inserts a new line while typing |
+| `Ctrl / Cmd + Enter` | Confirm the text while typing |
 | `Shift + Enter` | New line while typing text — multi-line annotations supported |
 
 ### Usage notes
 
-Toolbar: `Rectangle ｜ Ellipse ｜ Arrow ｜ Brush ｜ Mosaic ｜ Text ｜ Undo ｜ Download ｜ Cancel ｜ Done`. Selecting a drawing tool expands a secondary toolbar: shapes/brush get three thickness levels and a six-color palette, mosaic only gets block size, text only gets color. Default is red, 2px.
+Toolbar: `Rectangle ｜ Ellipse ｜ Arrow ｜ Brush ｜ Mosaic ｜ Text ｜ Undo ｜ Download ｜ Cancel ｜ Done`. Selecting a drawing tool expands a secondary toolbar: shapes/brush get three thickness levels and a six-color palette, mosaic only gets block size, text gets font size, text color, and outline width + outline color. Default is red, 2px.
 
-The text input box auto-grows with content; on commit, text lands according to the actual layout inside the box (including line breaks), exactly where you saw it — no shifting. Clicking elsewhere on the canvas, switching tools, undo / download / done all commit the in-progress text first.
+The text input box auto-grows with content. `Enter` inserts a new line; `Ctrl / Cmd + Enter` or clicking outside the box confirms. On commit, text lands according to the actual layout inside the box (including line breaks), exactly where you saw it — no shifting. Switching tools, undo / download / done also commit the in-progress text first. With the Text tool still active, clicking existing text reopens it in place with its original content and style, so you can change the text, size, color, or outline; clearing the content and confirming deletes it, and all of these edits are undoable.
 
 Once the selection is fixed, a green frame with 8 handles (four corners + four edge midpoints) appears outside it: drag a handle or an edge to resize, and the size readout in the top-left updates live. When no annotation tool is active, dragging inside the selection moves it as a whole, and existing annotations follow the move or scale proportionally with it (stroke width and font size stay unchanged). With a tool active, dragging inside draws annotations again — click the active tool once more to deselect it and move the selection. Both moves and resizes go into the undo stack, so `Ctrl / Cmd + Z` steps back to the previous position and size.
 
@@ -144,9 +145,8 @@ On Safari, "Done" also copies first; it only switches to download when the clipb
 Kept transparent so you can judge whether it fits:
 
 - No window/element auto-snapping, no magnifier, no color picker, no scrollable long screenshots.
-- Annotations can't be re-edited (no select, drag, or individual delete) — only whole-undo.
+- Only text annotations can be re-edited (click existing text with the Text tool active); other annotations can't be individually selected, dragged, or deleted — only whole-undo, though they do move and scale along with the selection.
 - Annotations are clipped to the selection; text extending below the selection's bottom edge gets cut off.
-- After a selection is fixed you can't drag its corners to resize — click "Cancel" and re-enter to reselect.
 - The captured content is whatever the user authorized to share; it isn't guaranteed to equal the current page.
 - iOS / iPadOS Safari has no `getDisplayMedia`, so capture is unavailable there; use the system screenshot or another device.
 - On Safari the share source is controlled by the macOS panel; unlike Chrome, you can't use constraints to pre-select a tab or window.

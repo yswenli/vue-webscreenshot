@@ -43,6 +43,10 @@ export interface TextOp extends BaseOp {
 	x: number;
 	y: number;
 	text: string;
+	/** 描边宽度，CSS 像素；缺省或 0 表示不描边 */
+	strokeWidth?: number;
+	/** 描边颜色，仅在 strokeWidth > 0 时生效 */
+	strokeColor?: string;
 }
 
 export type AnnotationOp = RectShapeOp | ArrowOp | BrushOp | TextOp;
@@ -252,6 +256,8 @@ function drawBrush(ctx: CanvasRenderingContext2D, op: BrushOp, opt: DrawOption):
 
 function drawText(ctx: CanvasRenderingContext2D, op: TextOp, opt: DrawOption): void {
 	const fontPx = Math.max(6, op.width * opt.widthScale);
+	// 描边宽度与字号独立，同样随导出倍率放大，但不受选区缩放影响
+	const strokePx = op.strokeWidth && op.strokeWidth > 0 ? Math.max(0.5, op.strokeWidth * opt.widthScale) : 0;
 	const x = opt.offsetX + op.x * opt.scale;
 	const y = opt.offsetY + op.y * opt.scale;
 	ctx.save();
@@ -259,8 +265,16 @@ function drawText(ctx: CanvasRenderingContext2D, op: TextOp, opt: DrawOption): v
 	ctx.textAlign = 'left';
 	ctx.textBaseline = 'top';
 	ctx.font = `${fontPx}px ${TEXT_FONT_FAMILY}`;
+	ctx.lineJoin = 'round';
+	ctx.miterLimit = 2;
 	op.text.split('\n').forEach((line, index) => {
-		ctx.fillText(line, x, y + index * fontPx * TEXT_LINE_HEIGHT_RATIO);
+		const lineY = y + index * fontPx * TEXT_LINE_HEIGHT_RATIO;
+		if (strokePx > 0) {
+			ctx.lineWidth = strokePx;
+			ctx.strokeStyle = op.strokeColor || '#ffffff';
+			ctx.strokeText(line, x, lineY);
+		}
+		ctx.fillText(line, x, lineY);
 	});
 	ctx.restore();
 }

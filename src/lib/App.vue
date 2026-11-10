@@ -25,7 +25,7 @@
 				@pointerdown.stop
 				@input="syncTextSize"
 				@keydown="onTextKeyDown"
-				@blur="commitText"
+				@blur="onTextBlur"
 			/>
 			<Toolbar
 				v-if="state.sel && state.stage === 'annotate'"
@@ -33,11 +33,17 @@
 				:width="state.width"
 				:widths="widths"
 				:font-sizes="fontSizes"
+				:stroke-width="state.strokeWidth"
+				:stroke-color="state.strokeColor"
+				:stroke-widths="STROKE_WIDTHS"
+				:stroke-colors="COLORS"
 				:color="state.color"
 				:anchor="state.sel"
 				:can-undo="state.history.length > 0"
 				@update:model-value="onToolChange"
 				@update:width="onWidthChange"
+				@update:stroke-width="onStrokeWidthChange"
+				@update:stroke-color="onStrokeColorChange"
 				@update:color="onColorChange"
 				@undo="undo"
 				@download="onDownload"
@@ -63,7 +69,7 @@ import {
 	TEXT_FONT_SIZE,
 	TEXT_LINE_HEIGHT_RATIO
 } from './annotation';
-import type { AnnotationOp, Point, Rect, ToolType } from './annotation';
+import type { AnnotationOp, Point, Rect, TextOp, ToolType } from './annotation';
 
 const COLORS = ['#ff4d4f', '#ffd400', '#22c55e', '#1677ff', '#111111', '#ffffff'];
 /** 选区边框与控制点颜色 */
@@ -80,6 +86,10 @@ const MIN_SEL = 5;
 const HISTORY_LIMIT = 100;
 /** 文字字号档位，单位 CSS 像素 */
 const FONT_SIZES = [12, 16, 20];
+/** 文字描边宽度档位，单位 CSS 像素；0 表示不描边 */
+const STROKE_WIDTHS = [0, 2, 4];
+/** 文字描边默认颜色 */
+const DEFAULT_STROKE_COLOR = '#ffffff';
 /** 输入框内容内边距（与 .vws-text 的 padding 保持一致） */
 const TEXT_PAD_X = 4;
 const TEXT_PAD_Y = 2;
@@ -137,6 +147,12 @@ interface ShotState {
 	color: string;
 	textEditing: boolean;
 	textValue: string;
+	/** 正在编辑已有文字时的标注下标；null 表示新建文字 */
+	editingTextIndex: number | null;
+	/** 文字描边宽度，CSS 像素；0 表示不描边 */
+	strokeWidth: number;
+	/** 文字描边颜色 */
+	strokeColor: string;
 	/** 文字锚点，静帧像素；CSS 坐标由它换算，窗口尺寸变化时自动跟随 */
 	textFrameAt: Point;
 	/** 输入框当前高度，用于边界夹紧 */
@@ -160,6 +176,9 @@ const state = reactive<ShotState>({
 	color: COLORS[0],
 	textEditing: false,
 	textValue: '',
+	editingTextIndex: null,
+	strokeWidth: 0,
+	strokeColor: DEFAULT_STROKE_COLOR,
 	textFrameAt: { x: 0, y: 0 },
 	textBoxH: textLineHeight(TEXT_FONT_SIZE) + TEXT_PAD_Y * 2,
 	toast: '',
@@ -184,6 +203,13 @@ let frame: HTMLCanvasElement | null = null;
 let toastTimer = 0;
 let drag: Drag | null = null;
 let bodyOverflow = '';
+/** 文字测量用的离屏上下文，按需创建 */
+let measureCtx: CanvasRenderingContext2D | null = null;
+/**
+ * 打开文字输入框的瞬间会由浏览器的默认聚焦行为触发一次 blur。
+ * 用这个开关压掉那次 blur，避免刚打开的输入框被立刻提交。
+ */
+let ignoreBlur = false;
 
 function lockBody(): void {
 	bodyOverflow = document.body.style.overflow;
@@ -276,7 +302,7 @@ const textLayout = computed<TextLayout>(() => {
 
 const textInputStyle = computed((): Record<string, string> => {
 	const box = textLayout.value;
-	return {
+	const style: Record<string, string> = {
 		left: `${box.left}px`,
 		top: `${box.top}px`,
 		width: `${box.width}px`,
@@ -285,6 +311,11 @@ const textInputStyle = computed((): Record<string, string> => {
 		fontSize: `${state.width}px`,
 		lineHeight: `${textLineHeight(state.width)}px`
 	};
+	// 输入框里用文字描边近似预览画布效果；宽度为 0 时保持纯净
+	if (state.strokeWidth > 0) {
+		style['-webkit-text-stroke'] = `${state.strokeWidth}px ${state.strokeColor}`;
+	}
+	return style;
 });
 
 /** 输入框随内容增高：先归零再读 scrollHeight，否则缩不回去 */
@@ -324,9 +355,13 @@ function resetState(): void {
 	state.width = 2;
 	state.textEditing = false;
 	state.textValue = '';
+	state.editingTextIndex = null;
+	state.strokeWidth = 0;
+	state.strokeColor = DEFAULT_STROKE_COLOR;
 	state.toast = '';
 	state.cursor = '';
 	drag = null;
+	ignoreBlur = false;
 	if (frame) {
 		frame.width = 0;
 		frame.height = 0;
@@ -345,8 +380,12 @@ function resetForShot(): void {
 	state.color = COLORS[0];
 	state.textEditing = false;
 	state.textValue = '';
+	state.editingTextIndex = null;
+	state.strokeWidth = 0;
+	state.strokeColor = DEFAULT_STROKE_COLOR;
 	state.cursor = '';
 	drag = null;
+	ignoreBlur = false;
 }
 
 function bind(): void {
@@ -421,6 +460,42 @@ function toFrame(p: Point): Point {
 
 function insideSelection(sel: Rect, x: number, y: number): boolean {
 	return x >= sel.x && x <= sel.x + sel.w && y >= sel.y && y <= sel.y + sel.h;
+}
+
+function getMeasureCtx(): CanvasRenderingContext2D | null {
+	if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d');
+	return measureCtx;
+}
+
+/**
+ * 文字标注在静帧坐标下的包围盒，用于命中已落字的文字。
+ * 行高取画布实际换行步进，宽度按最长一行测量，宁可稍大一点方便点中。
+ */
+function textBounds(op: TextOp): Rect {
+	const fontPx = Math.max(6, op.width);
+	const lines = op.text.split('\n');
+	let width = 0;
+	const ctx = getMeasureCtx();
+	if (ctx) {
+		ctx.font = `${fontPx}px ${TEXT_FONT_FAMILY}`;
+		for (const line of lines) width = Math.max(width, ctx.measureText(line).width);
+	} else {
+		// 极端情况下取不到上下文，用字数粗估，保证还能点中
+		for (const line of lines) width = Math.max(width, line.length * fontPx * 0.6);
+	}
+	return { x: op.x, y: op.y, w: width, h: lines.length * fontPx * TEXT_LINE_HEIGHT_RATIO };
+}
+
+/** 从后往前找落点下的文字标注；返回 -1 表示没点到 */
+function textIndexAt(p: Point): number {
+	const pad = 4 * frameRatio.value;
+	for (let i = state.ops.length - 1; i >= 0; i--) {
+		const op = state.ops[i];
+		if (!op || op.type !== 'text') continue;
+		const box = textBounds(op);
+		if (p.x >= box.x - pad && p.x <= box.x + box.w + pad && p.y >= box.y - pad && p.y <= box.y + box.h + pad) return i;
+	}
+	return -1;
 }
 
 /** 8 个控制点：四角 + 四边中点，坐标是选区边界上的 CSS 像素 */
@@ -545,7 +620,9 @@ function repaint(): void {
 		ctx.rect(sel.x, sel.y, sel.w, sel.h);
 		ctx.clip();
 		ctx.drawImage(frame, d.x, d.y, d.w, d.h);
-		drawOps(ctx, state.ops, option);
+		// 正在修改的文字在输入框里预览，画布上先不画，避免旧内容从半透明输入框下透出来
+		const shownOps = state.editingTextIndex === null ? state.ops : state.ops.filter((_, i) => i !== state.editingTextIndex);
+		drawOps(ctx, shownOps, option);
 		if (state.draft) drawOps(ctx, [state.draft], option);
 		ctx.restore();
 		if (state.stage === 'annotate') {
@@ -581,6 +658,8 @@ function isMeaningful(op: AnnotationOp): boolean {
 
 function onPointerDown(event: PointerEvent): void {
 	if (state.capturing) return;
+	// 只响应主键/触摸，右键与多指副指针不进入拖拽
+	if (event.button !== 0 || !event.isPrimary) return;
 	// 输入框的 blur 晚于 pointerdown，等 blur 提交会让这一笔点击被吞掉
 	if (state.textEditing) commitText();
 	const host = event.currentTarget as HTMLElement | null;
@@ -620,11 +699,14 @@ function onPointerDown(event: PointerEvent): void {
 	}
 	const tool = state.tool;
 	if (!tool) return;
-	const p = clampToSelection(event.clientX, event.clientY);
 	if (tool === 'text') {
-		openTextEditor(p);
+		// 点到已落字的文字优先进入修改，否则在落点新建
+		const index = textIndexAt(toFrame({ x: event.clientX, y: event.clientY }));
+		if (index >= 0) openTextEditorFor(index);
+		else openTextEditor(clampToSelection(event.clientX, event.clientY));
 		return;
 	}
+	const p = clampToSelection(event.clientX, event.clientY);
 	const fp = toFrame(p);
 	drag = { mode: 'draw', startCss: p, startFrame: fp, points: [fp] };
 	state.draft = buildOp(tool, fp, fp, [fp]);
@@ -665,7 +747,8 @@ function resizeSelection(event: PointerEvent, dir: ResizeDir, startSel: Rect, st
 		x: dir.includes('w') ? startSel.x + startSel.w : startSel.x,
 		y: dir.includes('n') ? startSel.y + startSel.h : startSel.y
 	});
-	state.ops = scaleOps(startOps, next.w / startSel.w, next.h / startSel.h, anchor);
+	// 分母兜底，避免极端情况下（窗口被压到 0 宽）算出 NaN 污染标注坐标
+	state.ops = scaleOps(startOps, next.w / Math.max(startSel.w, 1), next.h / Math.max(startSel.h, 1), anchor);
 	repaint();
 }
 
@@ -738,10 +821,33 @@ function rectChanged(a: Rect, b: Rect | null): boolean {
 }
 
 function openTextEditor(p: Point): void {
+	state.editingTextIndex = null;
 	state.textFrameAt = toFrame(p);
 	state.textValue = '';
 	state.textBoxH = textLineHeight(state.width) + TEXT_PAD_Y * 2;
+	beginTextEditing();
+}
+
+/** 点击已有文字：回到它原来的位置与样式上继续修改，确认后原位替换 */
+function openTextEditorFor(index: number): void {
+	const op = state.ops[index];
+	if (!op || op.type !== 'text') return;
+	state.editingTextIndex = index;
+	state.textFrameAt = { x: op.x, y: op.y };
+	state.textValue = op.text;
+	state.width = op.width;
+	state.color = op.color;
+	state.strokeWidth = op.strokeWidth && op.strokeWidth > 0 ? op.strokeWidth : 0;
+	state.strokeColor = op.strokeColor || DEFAULT_STROKE_COLOR;
+	state.textBoxH = textLineHeight(state.width) * op.text.split('\n').length + TEXT_PAD_Y * 2;
+	beginTextEditing();
+}
+
+function beginTextEditing(): void {
 	state.textEditing = true;
+	ignoreBlur = true;
+	// 修改已有文字时先把它从画布上收起来，编辑期间只显示输入框里的预览
+	repaint();
 	void nextTick(() => {
 		if (state.textEditing) focusTextEditor();
 	});
@@ -756,17 +862,40 @@ function openTextEditor(p: Point): void {
 function focusTextEditor(): void {
 	window.setTimeout(() => {
 		const el = textInputRef.value;
-		if (!el || !state.textEditing) return;
+		if (!el || !state.textEditing) {
+			ignoreBlur = false;
+			return;
+		}
 		if (document.activeElement !== el) el.focus();
+		// 光标放到末尾，继续输入或修改都更顺手
+		const end = el.value.length;
+		try {
+			el.setSelectionRange(end, end);
+		} catch {
+			/* 部分环境对未聚焦元素限制选区操作，忽略 */
+		}
 		syncTextSize();
+		// 默认聚焦引起的 blur 已经过去，之后才把 blur 当作「点外部确认」
+		ignoreBlur = false;
 	}, 0);
 }
 
-/** Shift+Enter 换行，Enter 提交；组词中的回车是选词，不能当提交 */
+/**
+ * 文字输入框键盘处理：
+ * Enter / Shift + Enter 由浏览器插入换行，Ctrl / Cmd + Enter 才确认；
+ * 组词中的回车是选词，不能当确认。
+ */
 function onTextKeyDown(event: KeyboardEvent): void {
-	if (event.key !== 'Enter' || event.shiftKey) return;
+	if (event.key !== 'Enter') return;
 	if (event.isComposing || event.keyCode === 229) return;
+	if (!(event.ctrlKey || event.metaKey)) return;
 	event.preventDefault();
+	commitText();
+}
+
+/** 输入框失焦：点外部即确认，但忽略刚打开时浏览器默认聚焦造成的那次 blur */
+function onTextBlur(): void {
+	if (ignoreBlur) return;
 	commitText();
 }
 
@@ -774,13 +903,62 @@ function commitText(): void {
 	if (!state.textEditing) return;
 	const text = state.textValue.trim();
 	const box = textLayout.value;
+	const editIndex = state.editingTextIndex;
 	state.textEditing = false;
 	state.textValue = '';
+	state.editingTextIndex = null;
+	ignoreBlur = false;
+	if (editIndex !== null) {
+		const prev = state.ops[editIndex];
+		if (!prev || prev.type !== 'text') {
+			repaint();
+			return;
+		}
+		if (!text) {
+			// 清空已有文字等于删除，仍可撤销
+			pushHistory();
+			state.ops = state.ops.filter((_, i) => i !== editIndex);
+			repaint();
+			return;
+		}
+		const next: TextOp = {
+			...prev,
+			color: state.color,
+			width: state.width,
+			text,
+			strokeWidth: state.strokeWidth,
+			strokeColor: state.strokeColor
+		};
+		// 只点开看了看、没改任何东西时不占撤销栈；位置沿用原锚点，避免来回漂移
+		if (
+			prev.text === next.text &&
+			prev.color === next.color &&
+			prev.width === next.width &&
+			(prev.strokeWidth || 0) === (next.strokeWidth || 0) &&
+			(prev.strokeColor || DEFAULT_STROKE_COLOR) === next.strokeColor
+		) {
+			repaint();
+			return;
+		}
+		pushHistory();
+		state.ops = state.ops.map((op, i) => (i === editIndex ? next : op));
+		repaint();
+		return;
+	}
 	if (text) {
 		// 落字原点取输入框内首行文字的位置，预览与成品完全重合
 		const origin = toFrame({ x: box.left + TEXT_PAD_X, y: box.top + box.textOffsetY });
 		pushHistory();
-		state.ops.push({ type: 'text', color: state.color, width: state.width, x: origin.x, y: origin.y, text });
+		state.ops.push({
+			type: 'text',
+			color: state.color,
+			width: state.width,
+			x: origin.x,
+			y: origin.y,
+			text,
+			strokeWidth: state.strokeWidth,
+			strokeColor: state.strokeColor
+		});
 	}
 	repaint();
 }
@@ -789,6 +967,8 @@ function cancelText(): void {
 	if (!state.textEditing) return;
 	state.textEditing = false;
 	state.textValue = '';
+	state.editingTextIndex = null;
+	ignoreBlur = false;
 	repaint();
 }
 
@@ -824,11 +1004,21 @@ function onToolChange(tool: ToolType | null): void {
 	if (tool === 'text') state.width = TEXT_FONT_SIZE;
 	else if (tool === 'mosaic') state.width = 8;
 	else if (tool) state.width = 2;
+	// 工具切换后指针样式交给 CSS，等下一次 pointermove 再按命中结果刷新
+	setCursor('');
 	repaint();
 }
 
 function onWidthChange(value: number): void {
 	state.width = value;
+}
+
+function onStrokeWidthChange(value: number): void {
+	state.strokeWidth = value;
+}
+
+function onStrokeColorChange(value: string): void {
+	state.strokeColor = value;
 }
 
 function onColorChange(value: string): void {
@@ -968,10 +1158,18 @@ function cancel(): void {
 
 function onResize(): void {
 	if (!state.visible) return;
+	const prev = state.display;
 	layout();
 	const sel = state.sel;
-	if (sel) {
-		state.sel = normalizeRect(clampToDisplay(sel.x, sel.y), clampToDisplay(sel.x + sel.w, sel.y + sel.h));
+	// 静帧是按窗口等比适配的，选区要跟着同一比例映射，才会继续盖住同一块画面内容
+	if (sel && prev.w > 0 && prev.h > 0) {
+		const k = state.display.w / prev.w;
+		state.sel = {
+			x: state.display.x + (sel.x - prev.x) * k,
+			y: state.display.y + (sel.y - prev.y) * k,
+			w: sel.w * k,
+			h: sel.h * k
+		};
 	}
 	repaint();
 	// 输入框宽度随窗口变化后会重新折行，高度需跟着重算

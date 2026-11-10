@@ -58,6 +58,34 @@
 					<span :style="{ background: c }" />
 				</button>
 			</template>
+			<template v-if="showStroke">
+				<span class="vws-tb__sep" />
+				<span class="vws-tb__label">描边</span>
+				<button
+					v-for="w in strokeWidths"
+					:key="`stroke-${w}`"
+					type="button"
+					class="vws-tb__dot"
+					:class="{ 'is-active': strokeWidth === w }"
+					:title="w > 0 ? `描边 ${w}px` : '无描边'"
+					@click="emit('update:strokeWidth', w)"
+				>
+					<span :style="strokeDotStyle(w)" />
+				</button>
+				<template v-if="strokeWidth > 0">
+					<button
+						v-for="c in strokeColors"
+						:key="`stroke-color-${c}`"
+						type="button"
+						class="vws-tb__color"
+						:class="{ 'is-active': strokeColor === c }"
+						:title="`描边色 ${c}`"
+						@click="emit('update:strokeColor', c)"
+					>
+						<span :style="{ background: c }" />
+					</button>
+				</template>
+			</template>
 		</div>
 	</div>
 </template>
@@ -75,6 +103,14 @@ const props = defineProps<{
 	widths: number[];
 	/** 文字工具的字号档位 */
 	fontSizes: number[];
+	/** 文字描边宽度档位；0 表示不描边 */
+	strokeWidths: number[];
+	/** 文字描边颜色档位 */
+	strokeColors: string[];
+	/** 文字描边宽度 */
+	strokeWidth: number;
+	/** 文字描边颜色 */
+	strokeColor: string;
 	color: string;
 	anchor: Rect;
 	canUndo: boolean;
@@ -83,6 +119,8 @@ const props = defineProps<{
 const emit = defineEmits<{
 	(e: 'update:modelValue', value: ToolType | null): void;
 	(e: 'update:width', value: number): void;
+	(e: 'update:strokeWidth', value: number): void;
+	(e: 'update:strokeColor', value: string): void;
 	(e: 'update:color', value: string): void;
 	(e: 'undo'): void;
 	(e: 'download'): void;
@@ -107,9 +145,24 @@ const size = reactive({ w: 0, h: 0 });
 const showWidths = computed(() => !!props.modelValue && props.modelValue !== 'text');
 const showSizes = computed(() => props.modelValue === 'text');
 const showColors = computed(() => !!props.modelValue && props.modelValue !== 'mosaic');
+const showStroke = computed(() => props.modelValue === 'text');
 
 function dotStyle(width: number): Record<string, string> {
 	const d = Math.max(5, Math.min(14, width * 1.5));
+	return { width: `${d}px`, height: `${d}px` };
+}
+
+/** 描边粗细用实心圆表示，0 档画成空心圆表示「无描边」 */
+function strokeDotStyle(width: number): Record<string, string> {
+	if (width <= 0) {
+		return {
+			width: '8px',
+			height: '8px',
+			background: 'transparent',
+			boxShadow: 'inset 0 0 0 1px #fff'
+		};
+	}
+	const d = Math.max(8, Math.min(12, width + 6));
 	return { width: `${d}px`, height: `${d}px` };
 }
 
@@ -141,12 +194,23 @@ watch(
 	() => nextTick(measure)
 );
 
+let observer: ResizeObserver | null = null;
+
 onMounted(() => {
 	measure();
 	window.addEventListener('resize', measure);
+	// 二级工具栏会随选项增减变宽变窄，用 ResizeObserver 跟着重算位置，避免贴边溢出
+	if (typeof ResizeObserver !== 'undefined' && rootRef.value) {
+		observer = new ResizeObserver(measure);
+		observer.observe(rootRef.value);
+	}
 });
 
-onUnmounted(() => window.removeEventListener('resize', measure));
+onUnmounted(() => {
+	window.removeEventListener('resize', measure);
+	observer?.disconnect();
+	observer = null;
+});
 </script>
 
 <style scoped>
@@ -268,6 +332,13 @@ onUnmounted(() => window.removeEventListener('resize', measure));
 
 .vws-tb__size.is-active {
 	background: rgba(255, 255, 255, 0.26);
+}
+
+.vws-tb__label {
+	color: rgba(255, 255, 255, 0.62);
+	font-size: 11px;
+	line-height: 1;
+	white-space: nowrap;
 }
 
 .vws-tb__color {
