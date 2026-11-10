@@ -12,22 +12,33 @@ export interface Rect {
 
 export type ToolType = 'rect' | 'ellipse' | 'arrow' | 'brush' | 'mosaic' | 'text';
 
+/**
+ * 所有工具共用同一套描边模型：
+ * `strokeWidth` 是描边宽度（0 表示不描边），`strokeColor` 是描边颜色。
+ * 矩形/椭圆/箭头/画笔的线条色、文字的外描边都走这两个字段。
+ */
 interface BaseOp {
 	type: ToolType;
-	/** 描边或文字颜色 */
-	color: string;
-	/** 线宽、字号或马赛克块大小，单位 CSS 像素 */
-	width: number;
-	/** 是否绘制描边；缺省视为 true，仅矩形/椭圆/箭头/画笔使用 */
-	stroke?: boolean;
+	/** 描边宽度，CSS 像素；0 表示不描边。图形线宽与文字描边宽度共用 */
+	strokeWidth: number;
+	/** 描边颜色。图形线条色与文字描边色共用 */
+	strokeColor: string;
 }
 
 /** 以矩形表达的图形；矩形已归一化（w/h 非负），不携带方向 */
 export interface RectShapeOp extends BaseOp {
-	type: 'rect' | 'ellipse' | 'mosaic';
+	type: 'rect' | 'ellipse';
 	rect: Rect;
-	/** 填充色；null 或缺省表示不填充，仅矩形/椭圆使用 */
-	fill?: string | null;
+	/** 填充色；null 表示不填充 */
+	fill: string | null;
+}
+
+/** 马赛克；按 blockSize 采样，不参与描边 */
+export interface MosaicOp extends BaseOp {
+	type: 'mosaic';
+	rect: Rect;
+	/** 马赛克块大小，单位 CSS 像素 */
+	blockSize: number;
 }
 
 /** 箭头必须保留起止顺序：归一化成矩形会丢掉方向，画出来会指向反方向 */
@@ -47,13 +58,13 @@ export interface TextOp extends BaseOp {
 	x: number;
 	y: number;
 	text: string;
-	/** 描边宽度，CSS 像素；缺省或 0 表示不描边 */
-	strokeWidth?: number;
-	/** 描边颜色，仅在 strokeWidth > 0 时生效 */
-	strokeColor?: string;
+	/** 文字颜色 */
+	color: string;
+	/** 字号，单位 CSS 像素 */
+	fontSize: number;
 }
 
-export type AnnotationOp = RectShapeOp | ArrowOp | BrushOp | TextOp;
+export type AnnotationOp = RectShapeOp | MosaicOp | ArrowOp | BrushOp | TextOp;
 
 /** 几何坐标始终是静帧像素，这里描述如何映射到当前绘制目标 */
 export interface DrawOption {
@@ -174,30 +185,36 @@ function drawOp(ctx: CanvasRenderingContext2D, op: AnnotationOp, opt: DrawOption
 	}
 }
 
+/** 描边宽度换算到目标画布像素；0 表示不描边，最小按 0.1px 绘制以保留细线 */
+function strokeWidthOf(op: BaseOp, opt: DrawOption): number {
+	return op.strokeWidth > 0 ? Math.max(0.1, op.strokeWidth * opt.widthScale) : 0;
+}
+
 function drawRectShape(ctx: CanvasRenderingContext2D, op: RectShapeOp, opt: DrawOption): void {
-	const hasStroke = op.stroke !== false;
+	const lineWidth = strokeWidthOf(op, opt);
 	const fill = op.fill || null;
 	// 描边与填充都关掉时什么都不画
-	if (!hasStroke && !fill) return;
+	if (!lineWidth && !fill) return;
 	const x = opt.offsetX + op.rect.x * opt.scale;
 	const y = opt.offsetY + op.rect.y * opt.scale;
 	const w = op.rect.w * opt.scale;
 	const h = op.rect.h * opt.scale;
-	const lineWidth = Math.max(1, op.width * opt.widthScale);
 	ctx.save();
-	ctx.strokeStyle = op.color;
-	ctx.fillStyle = fill || op.color;
-	ctx.lineWidth = lineWidth;
-	ctx.lineCap = 'round';
-	ctx.lineJoin = 'round';
+	if (fill) ctx.fillStyle = fill;
+	if (lineWidth) {
+		ctx.strokeStyle = op.strokeColor;
+		ctx.lineWidth = lineWidth;
+		ctx.lineCap = 'round';
+		ctx.lineJoin = 'round';
+	}
 	if (op.type === 'rect') {
 		if (fill) ctx.fillRect(x, y, w, h);
-		if (hasStroke) ctx.strokeRect(x, y, w, h);
+		if (lineWidth) ctx.strokeRect(x, y, w, h);
 	} else {
 		ctx.beginPath();
 		ctx.ellipse(x + w / 2, y + h / 2, Math.max(w / 2, 0.5), Math.max(h / 2, 0.5), 0, 0, Math.PI * 2);
 		if (fill) ctx.fill();
-		if (hasStroke) ctx.stroke();
+		if (lineWidth) ctx.stroke();
 	}
 	ctx.restore();
 }
@@ -206,7 +223,8 @@ function drawRectShape(ctx: CanvasRenderingContext2D, op: RectShapeOp, opt: Draw
 const ARROW_HEAD_ANGLE = Math.PI / 7;
 
 function drawArrow(ctx: CanvasRenderingContext2D, op: ArrowOp, opt: DrawOption): void {
-	if (op.stroke === false) return;
+	const lineWidth = strokeWidthOf(op, opt);
+	if (!lineWidth) return;
 	const x1 = opt.offsetX + op.from.x * opt.scale;
 	const y1 = opt.offsetY + op.from.y * opt.scale;
 	const x2 = opt.offsetX + op.to.x * opt.scale;
@@ -215,13 +233,12 @@ function drawArrow(ctx: CanvasRenderingContext2D, op: ArrowOp, opt: DrawOption):
 	const dy = y2 - y1;
 	const length = Math.hypot(dx, dy);
 	if (length < 0.5) return;
-	const lineWidth = Math.max(1, op.width * opt.widthScale);
 	// 头部长度不超过箭杆的一半，否则短箭头的三角会翻出起点、画成反向
 	const head = Math.min(Math.max(10 * opt.widthScale, lineWidth * 3.5), length * 0.5);
 	const angle = Math.atan2(dy, dx);
 	ctx.save();
-	ctx.strokeStyle = op.color;
-	ctx.fillStyle = op.color;
+	ctx.strokeStyle = op.strokeColor;
+	ctx.fillStyle = op.strokeColor;
 	ctx.lineWidth = lineWidth;
 	ctx.lineCap = 'round';
 	ctx.lineJoin = 'round';
@@ -240,13 +257,13 @@ function drawArrow(ctx: CanvasRenderingContext2D, op: ArrowOp, opt: DrawOption):
 }
 
 function drawBrush(ctx: CanvasRenderingContext2D, op: BrushOp, opt: DrawOption): void {
-	if (op.stroke === false) return;
+	const lineWidth = strokeWidthOf(op, opt);
+	if (!lineWidth) return;
 	const points = op.points;
 	if (!points.length) return;
-	const lineWidth = Math.max(1, op.width * opt.widthScale);
 	ctx.save();
-	ctx.strokeStyle = op.color;
-	ctx.fillStyle = op.color;
+	ctx.strokeStyle = op.strokeColor;
+	ctx.fillStyle = op.strokeColor;
 	ctx.lineWidth = lineWidth;
 	ctx.lineCap = 'round';
 	ctx.lineJoin = 'round';
@@ -267,9 +284,9 @@ function drawBrush(ctx: CanvasRenderingContext2D, op: BrushOp, opt: DrawOption):
 }
 
 function drawText(ctx: CanvasRenderingContext2D, op: TextOp, opt: DrawOption): void {
-	const fontPx = Math.max(6, op.width * opt.widthScale);
+	const fontPx = Math.max(6, op.fontSize * opt.widthScale);
 	// 描边宽度与字号独立，同样随导出倍率放大，但不受选区缩放影响
-	const strokePx = op.strokeWidth && op.strokeWidth > 0 ? Math.max(0.5, op.strokeWidth * opt.widthScale) : 0;
+	const strokePx = strokeWidthOf(op, opt);
 	const x = opt.offsetX + op.x * opt.scale;
 	const y = opt.offsetY + op.y * opt.scale;
 	ctx.save();
@@ -283,7 +300,7 @@ function drawText(ctx: CanvasRenderingContext2D, op: TextOp, opt: DrawOption): v
 		const lineY = y + index * fontPx * TEXT_LINE_HEIGHT_RATIO;
 		if (strokePx > 0) {
 			ctx.lineWidth = strokePx;
-			ctx.strokeStyle = op.strokeColor || '#ffffff';
+			ctx.strokeStyle = op.strokeColor;
 			ctx.strokeText(line, x, lineY);
 		}
 		ctx.fillText(line, x, lineY);
@@ -291,13 +308,13 @@ function drawText(ctx: CanvasRenderingContext2D, op: TextOp, opt: DrawOption): v
 	ctx.restore();
 }
 
-function drawMosaic(ctx: CanvasRenderingContext2D, op: RectShapeOp, opt: DrawOption): void {
+function drawMosaic(ctx: CanvasRenderingContext2D, op: MosaicOp, opt: DrawOption): void {
 	const x = opt.offsetX + op.rect.x * opt.scale;
 	const y = opt.offsetY + op.rect.y * opt.scale;
 	const w = op.rect.w * opt.scale;
 	const h = op.rect.h * opt.scale;
 	if (w < 1 || h < 1) return;
-	const block = Math.max(2, op.width * opt.widthScale);
+	const block = Math.max(2, op.blockSize * opt.widthScale);
 	const cols = Math.max(1, Math.round(w / block));
 	const rows = Math.max(1, Math.round(h / block));
 	const small = getScratch(cols, rows);

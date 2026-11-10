@@ -34,61 +34,36 @@
 				</button>
 			</template>
 
-			<!-- 文字：字号 + 文字颜色 + 描边 -->
-			<template v-else-if="modelValue === 'text'">
-				<button
-					v-for="s in fontSizes"
-					:key="s"
-					type="button"
-					class="vws-tb__size"
-					:class="{ 'is-active': width === s }"
-					:title="`字号 ${s}`"
-					@click="emit('update:width', s)"
-				>
-					{{ s }}
-				</button>
-				<span class="vws-tb__sep" />
-				<button
-					v-for="c in colors"
-					:key="c"
-					type="button"
-					class="vws-tb__color"
-					:class="{ 'is-active': color === c }"
-					:title="`文字色 ${c}`"
-					@click="emit('update:color', c)"
-				>
-					<span :style="{ background: c }" />
-				</button>
-				<span class="vws-tb__sep" />
-				<span class="vws-tb__label">描边</span>
-				<button
-					v-for="w in strokeWidths"
-					:key="`stroke-${w}`"
-					type="button"
-					class="vws-tb__dot"
-					:class="{ 'is-active': strokeWidth === w }"
-					:title="w > 0 ? `描边 ${w}px` : '无描边'"
-					@click="emit('update:strokeWidth', w)"
-				>
-					<span :style="strokeDotStyle(w)" />
-				</button>
-				<template v-if="strokeWidth > 0">
+			<template v-else>
+				<!-- 文字：字号 + 文字颜色 -->
+				<template v-if="modelValue === 'text'">
 					<button
-						v-for="c in strokeColors"
-						:key="`stroke-color-${c}`"
+						v-for="s in fontSizes"
+						:key="s"
+						type="button"
+						class="vws-tb__size"
+						:class="{ 'is-active': width === s }"
+						:title="`字号 ${s}`"
+						@click="emit('update:width', s)"
+					>
+						{{ s }}
+					</button>
+					<span class="vws-tb__sep" />
+					<button
+						v-for="c in colors"
+						:key="`text-${c}`"
 						type="button"
 						class="vws-tb__color"
-						:class="{ 'is-active': strokeColor === c }"
-						:title="`描边色 ${c}`"
-						@click="emit('update:strokeColor', c)"
+						:class="{ 'is-active': color === c }"
+						:title="`文字色 ${c}`"
+						@click="emit('update:color', c)"
 					>
 						<span :style="{ background: c }" />
 					</button>
+					<span class="vws-tb__sep" />
 				</template>
-			</template>
 
-			<!-- 矩形 / 椭圆 / 箭头 / 画笔：描边；矩形与椭圆另有填充 -->
-			<template v-else>
+				<!-- 描边：文字、矩形、椭圆、箭头、画笔共用同一套开关 + 手输宽度 + 颜色 -->
 				<span class="vws-tb__label">描边</span>
 				<button
 					type="button"
@@ -102,30 +77,34 @@
 					<span class="vws-tb__knob" />
 				</button>
 				<template v-if="strokeEnabled">
-					<button
-						v-for="w in widths"
-						:key="`width-${w}`"
-						type="button"
-						class="vws-tb__dot"
-						:class="{ 'is-active': width === w }"
-						:title="`粗细 ${w}`"
-						@click="emit('update:width', w)"
-					>
-						<span :style="dotStyle(w)" />
-					</button>
-					<span class="vws-tb__sep" />
+					<input
+						class="vws-tb__num"
+						type="number"
+						min="0.1"
+						step="0.1"
+						inputmode="decimal"
+						:value="strokeDraft"
+						:title="`描边宽度，0.1px 起，可直接输入`"
+						@pointerdown.stop
+						@input="onStrokeWidthInput"
+						@change="commitStrokeWidth"
+						@blur="commitStrokeWidth"
+					/>
+					<span class="vws-tb__unit">px</span>
 					<button
 						v-for="c in colors"
-						:key="`stroke-main-${c}`"
+						:key="`stroke-${c}`"
 						type="button"
 						class="vws-tb__color"
-						:class="{ 'is-active': color === c }"
+						:class="{ 'is-active': strokeColorValue === c }"
 						:title="`描边色 ${c}`"
-						@click="emit('update:color', c)"
+						@click="pickStrokeColor(c)"
 					>
 						<span :style="{ background: c }" />
 					</button>
 				</template>
+
+				<!-- 矩形 / 椭圆：填充 -->
 				<template v-if="showFill">
 					<span class="vws-tb__sep" />
 					<span class="vws-tb__label">填充</span>
@@ -172,15 +151,11 @@ const props = defineProps<{
 	widths: number[];
 	/** 文字工具的字号档位 */
 	fontSizes: number[];
-	/** 文字描边宽度档位；0 表示不描边 */
-	strokeWidths: number[];
-	/** 文字描边颜色档位 */
-	strokeColors: string[];
-	/** 文字描边宽度 */
+	/** 描边宽度，CSS 像素；0.1 起，手输 */
 	strokeWidth: number;
-	/** 文字描边颜色 */
+	/** 文字描边颜色；图形直接用 color 当描边色 */
 	strokeColor: string;
-	/** 矩形/椭圆/箭头/画笔是否开启描边 */
+	/** 是否绘制描边 */
 	strokeEnabled: boolean;
 	/** 矩形/椭圆是否开启填充 */
 	fillEnabled: boolean;
@@ -224,22 +199,57 @@ const size = reactive({ w: 0, h: 0 });
 
 const showFill = computed(() => props.modelValue === 'rect' || props.modelValue === 'ellipse');
 
-function dotStyle(width: number): Record<string, string> {
-	const d = Math.max(5, Math.min(14, width * 1.5));
-	return { width: `${d}px`, height: `${d}px` };
+/** 文字用自己的描边色，图形直接复用色板 color */
+const strokeColorValue = computed(() => (props.modelValue === 'text' ? props.strokeColor : props.color));
+
+/** 描边色对文字写文字描边色，对图形写线条色 */
+function pickStrokeColor(value: string): void {
+	if (props.modelValue === 'text') emit('update:strokeColor', value);
+	else emit('update:color', value);
 }
 
-/** 描边粗细用实心圆表示，0 档画成空心圆表示「无描边」 */
-function strokeDotStyle(width: number): Record<string, string> {
-	if (width <= 0) {
-		return {
-			width: '8px',
-			height: '8px',
-			background: 'transparent',
-			boxShadow: 'inset 0 0 0 1px #fff'
-		};
+/** 手输框里的草稿值：允许中途输入不合法内容，提交时再纠正 */
+const strokeDraft = ref(String(props.strokeWidth));
+
+watch(
+	() => props.strokeWidth,
+	(value) => {
+		const current = Number(strokeDraft.value);
+		if (!Number.isFinite(current) || Math.abs(current - value) > 1e-6) strokeDraft.value = formatStrokeWidth(value);
 	}
-	const d = Math.max(8, Math.min(12, width + 6));
+);
+
+function formatStrokeWidth(value: number): string {
+	return String(Math.round(value * 100) / 100);
+}
+
+/** 0.1px 起才有意义，非法输入返回 null 交给调用方回退 */
+function parseStrokeWidth(raw: string): number | null {
+	const value = Number(raw);
+	if (!Number.isFinite(value) || value < 0.1) return null;
+	return Math.round(value * 100) / 100;
+}
+
+function onStrokeWidthInput(event: Event): void {
+	strokeDraft.value = (event.target as HTMLInputElement).value;
+	const value = parseStrokeWidth(strokeDraft.value);
+	if (value !== null) emit('update:strokeWidth', value);
+}
+
+function commitStrokeWidth(): void {
+	const raw = Number(strokeDraft.value);
+	if (!Number.isFinite(raw)) {
+		// 空值 / 非法输入回退到当前生效值
+		strokeDraft.value = formatStrokeWidth(props.strokeWidth);
+		return;
+	}
+	const value = Math.max(0.1, Math.round(raw * 100) / 100);
+	strokeDraft.value = formatStrokeWidth(value);
+	emit('update:strokeWidth', value);
+}
+
+function dotStyle(width: number): Record<string, string> {
+	const d = Math.max(5, Math.min(14, width * 1.5));
 	return { width: `${d}px`, height: `${d}px` };
 }
 
@@ -298,6 +308,8 @@ onUnmounted(() => {
 	align-items: flex-end;
 	gap: 6px;
 	font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+	user-select: none;
+	-webkit-user-select: none;
 }
 
 .vws-tb__bar,
@@ -451,6 +463,41 @@ onUnmounted(() => {
 
 .vws-tb__switch.is-on .vws-tb__knob {
 	transform: translateX(12px);
+}
+
+/* 描边宽度手输框：0.1px 起，隐藏原生步进箭头省空间，方向键仍可微调 */
+.vws-tb__num {
+	width: 44px;
+	height: 22px;
+	padding: 0 4px;
+	border: 1px solid rgba(255, 255, 255, 0.28);
+	border-radius: 4px;
+	background: rgba(255, 255, 255, 0.08);
+	color: #f2f2f2;
+	font-size: 11px;
+	line-height: 1;
+	text-align: center;
+	-moz-appearance: textfield;
+	appearance: textfield;
+}
+
+.vws-tb__num:focus {
+	outline: none;
+	border-color: #1677ff;
+	background: rgba(22, 119, 255, 0.18);
+}
+
+.vws-tb__num::-webkit-outer-spin-button,
+.vws-tb__num::-webkit-inner-spin-button {
+	-webkit-appearance: none;
+	margin: 0;
+}
+
+.vws-tb__unit {
+	margin-left: -3px;
+	color: rgba(255, 255, 255, 0.5);
+	font-size: 10px;
+	line-height: 1;
 }
 
 .vws-tb__color {

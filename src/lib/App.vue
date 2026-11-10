@@ -35,8 +35,6 @@
 				:font-sizes="fontSizes"
 				:stroke-width="state.strokeWidth"
 				:stroke-color="state.strokeColor"
-				:stroke-widths="STROKE_WIDTHS"
-				:stroke-colors="COLORS"
 				:stroke-enabled="state.strokeEnabled"
 				:fill-enabled="state.fillEnabled"
 				:fill-color="state.fillColor"
@@ -93,8 +91,10 @@ const MIN_SEL = 5;
 const HISTORY_LIMIT = 100;
 /** 文字字号档位，单位 CSS 像素 */
 const FONT_SIZES = [12, 16, 20];
-/** 文字描边宽度档位，单位 CSS 像素；0 表示不描边 */
-const STROKE_WIDTHS = [0, 2, 4];
+/** 描边宽度下限，单位 CSS 像素；所有工具手输时都从 0.1 起 */
+const MIN_STROKE_WIDTH = 0.1;
+/** 文字描边默认宽度，单位 CSS 像素 */
+const TEXT_STROKE_WIDTH = 1;
 /** 文字描边默认颜色 */
 const DEFAULT_STROKE_COLOR = '#ffffff';
 /** 输入框内容内边距（与 .vws-text 的 padding 保持一致） */
@@ -150,10 +150,16 @@ interface ShotState {
 	history: Snapshot[];
 	draft: AnnotationOp | null;
 	tool: ToolType | null;
+	/** 当前工具的主体尺寸：文字字号或马赛克块大小，单位 CSS 像素 */
 	width: number;
+	/** 色板颜色：文字颜色 / 矩形/椭圆/箭头/画笔的描边色 */
 	color: string;
-	/** 矩形/椭圆/箭头/画笔是否绘制描边 */
+	/** 是否绘制描边；文字默认关闭，图形默认开启 */
 	strokeEnabled: boolean;
+	/** 描边宽度，CSS 像素，最小 0.1；文字描边与图形线宽共用 */
+	strokeWidth: number;
+	/** 文字描边颜色 */
+	strokeColor: string;
 	/** 矩形/椭圆是否填充 */
 	fillEnabled: boolean;
 	/** 矩形/椭圆的填充色 */
@@ -162,10 +168,6 @@ interface ShotState {
 	textValue: string;
 	/** 正在编辑已有文字时的标注下标；null 表示新建文字 */
 	editingTextIndex: number | null;
-	/** 文字描边宽度，CSS 像素；0 表示不描边 */
-	strokeWidth: number;
-	/** 文字描边颜色 */
-	strokeColor: string;
 	/** 文字锚点，静帧像素；CSS 坐标由它换算，窗口尺寸变化时自动跟随 */
 	textFrameAt: Point;
 	/** 输入框当前高度，用于边界夹紧 */
@@ -188,13 +190,13 @@ const state = reactive<ShotState>({
 	width: 2,
 	color: COLORS[0],
 	strokeEnabled: true,
+	strokeWidth: 2,
+	strokeColor: DEFAULT_STROKE_COLOR,
 	fillEnabled: false,
 	fillColor: COLORS[0],
 	textEditing: false,
 	textValue: '',
 	editingTextIndex: null,
-	strokeWidth: 0,
-	strokeColor: DEFAULT_STROKE_COLOR,
 	textFrameAt: { x: 0, y: 0 },
 	textBoxH: textLineHeight(TEXT_FONT_SIZE) + TEXT_PAD_Y * 2,
 	toast: '',
@@ -327,9 +329,10 @@ const textInputStyle = computed((): Record<string, string> => {
 		fontSize: `${state.width}px`,
 		lineHeight: `${textLineHeight(state.width)}px`
 	};
-	// 输入框里用文字描边近似预览画布效果；宽度为 0 时保持纯净
-	if (state.strokeWidth > 0) {
+	// 输入框里用文字描边近似预览画布效果；关闭描边时保持纯净
+	if (state.strokeEnabled && state.strokeWidth > 0) {
 		style['-webkit-text-stroke'] = `${state.strokeWidth}px ${state.strokeColor}`;
+		style.paintOrder = 'stroke fill';
 	}
 	return style;
 });
@@ -370,13 +373,13 @@ function resetState(): void {
 	state.tool = null;
 	state.width = 2;
 	state.strokeEnabled = true;
+	state.strokeWidth = 2;
+	state.strokeColor = DEFAULT_STROKE_COLOR;
 	state.fillEnabled = false;
 	state.fillColor = COLORS[0];
 	state.textEditing = false;
 	state.textValue = '';
 	state.editingTextIndex = null;
-	state.strokeWidth = 0;
-	state.strokeColor = DEFAULT_STROKE_COLOR;
 	state.toast = '';
 	state.cursor = '';
 	drag = null;
@@ -398,13 +401,13 @@ function resetForShot(): void {
 	state.width = 2;
 	state.color = COLORS[0];
 	state.strokeEnabled = true;
+	state.strokeWidth = 2;
+	state.strokeColor = DEFAULT_STROKE_COLOR;
 	state.fillEnabled = false;
 	state.fillColor = COLORS[0];
 	state.textEditing = false;
 	state.textValue = '';
 	state.editingTextIndex = null;
-	state.strokeWidth = 0;
-	state.strokeColor = DEFAULT_STROKE_COLOR;
 	state.cursor = '';
 	drag = null;
 	ignoreBlur = false;
@@ -494,7 +497,7 @@ function getMeasureCtx(): CanvasRenderingContext2D | null {
  * 行高取画布实际换行步进，宽度按最长一行测量，宁可稍大一点方便点中。
  */
 function textBounds(op: TextOp): Rect {
-	const fontPx = Math.max(6, op.width);
+	const fontPx = Math.max(6, op.fontSize);
 	const lines = op.text.split('\n');
 	let width = 0;
 	const ctx = getMeasureCtx();
@@ -660,12 +663,14 @@ function repaint(): void {
 
 function buildOp(tool: ToolType, from: Point, to: Point, points: Point[]): AnnotationOp | null {
 	if (tool === 'text') return null;
+	// 所有工具共用一套描边参数：关闭时落 0，绘制阶段据此跳过
+	const strokeWidth = state.strokeEnabled ? state.strokeWidth : 0;
+	const strokeColor = state.color;
 	if (tool === 'brush') {
 		return {
 			type: 'brush',
-			color: state.color,
-			width: state.width,
-			stroke: state.strokeEnabled,
+			strokeWidth,
+			strokeColor,
 			points: points.map((p) => ({ ...p }))
 		};
 	}
@@ -673,36 +678,34 @@ function buildOp(tool: ToolType, from: Point, to: Point, points: Point[]): Annot
 	if (tool === 'arrow') {
 		return {
 			type: 'arrow',
-			color: state.color,
-			width: state.width,
-			stroke: state.strokeEnabled,
+			strokeWidth,
+			strokeColor,
 			from: { ...from },
 			to: { ...to }
 		};
 	}
 	const rect = normalizeRect(from, to);
 	// 马赛克没有描边/填充概念，只按块大小取样
-	if (tool === 'mosaic') return { type: 'mosaic', color: state.color, width: state.width, rect };
+	if (tool === 'mosaic') return { type: 'mosaic', strokeWidth: 0, strokeColor, blockSize: state.width, rect };
 	return {
 		type: tool,
-		color: state.color,
-		width: state.width,
-		stroke: state.strokeEnabled,
+		strokeWidth,
+		strokeColor,
 		fill: state.fillEnabled ? state.fillColor : null,
 		rect
 	};
 }
 
 function isMeaningful(op: AnnotationOp): boolean {
-	if (op.type === 'brush') return op.stroke !== false && op.points.length > 1;
+	if (op.type === 'brush') return op.strokeWidth > 0 && op.points.length > 1;
 	if (op.type === 'text') return op.text.trim().length > 0;
 	// 水平/垂直箭头的 w 或 h 为 0，只能按长度判
 	if (op.type === 'arrow') {
-		if (op.stroke === false) return false;
+		if (op.strokeWidth <= 0) return false;
 		return Math.hypot(op.to.x - op.from.x, op.to.y - op.from.y) >= 4;
 	}
 	// 矩形/椭圆描边与填充都关掉时落不出任何像素，不生成标注
-	if (op.type !== 'mosaic' && op.stroke === false && !op.fill) return false;
+	if (op.type !== 'mosaic' && op.strokeWidth <= 0 && !op.fill) return false;
 	return op.rect.w >= 2 && op.rect.h >= 2;
 }
 
@@ -885,10 +888,11 @@ function openTextEditorFor(index: number): void {
 	state.editingTextIndex = index;
 	state.textFrameAt = { x: op.x, y: op.y };
 	state.textValue = op.text;
-	state.width = op.width;
+	state.width = op.fontSize;
 	state.color = op.color;
-	state.strokeWidth = op.strokeWidth && op.strokeWidth > 0 ? op.strokeWidth : 0;
-	state.strokeColor = op.strokeColor || DEFAULT_STROKE_COLOR;
+	state.strokeEnabled = op.strokeWidth > 0;
+	state.strokeWidth = op.strokeWidth > 0 ? op.strokeWidth : TEXT_STROKE_WIDTH;
+	state.strokeColor = op.strokeColor;
 	state.textBoxH = textLineHeight(state.width) * op.text.split('\n').length + TEXT_PAD_Y * 2;
 	beginTextEditing();
 }
@@ -974,18 +978,18 @@ function commitText(): void {
 		const next: TextOp = {
 			...prev,
 			color: state.color,
-			width: state.width,
+			fontSize: state.width,
 			text,
-			strokeWidth: state.strokeWidth,
+			strokeWidth: state.strokeEnabled ? state.strokeWidth : 0,
 			strokeColor: state.strokeColor
 		};
 		// 只点开看了看、没改任何东西时不占撤销栈；位置沿用原锚点，避免来回漂移
 		if (
 			prev.text === next.text &&
 			prev.color === next.color &&
-			prev.width === next.width &&
-			(prev.strokeWidth || 0) === (next.strokeWidth || 0) &&
-			(prev.strokeColor || DEFAULT_STROKE_COLOR) === next.strokeColor
+			prev.fontSize === next.fontSize &&
+			prev.strokeWidth === next.strokeWidth &&
+			prev.strokeColor === next.strokeColor
 		) {
 			repaint();
 			return;
@@ -1002,11 +1006,11 @@ function commitText(): void {
 		state.ops.push({
 			type: 'text',
 			color: state.color,
-			width: state.width,
+			fontSize: state.width,
 			x: origin.x,
 			y: origin.y,
 			text,
-			strokeWidth: state.strokeWidth,
+			strokeWidth: state.strokeEnabled ? state.strokeWidth : 0,
 			strokeColor: state.strokeColor
 		});
 	}
@@ -1051,9 +1055,19 @@ function onToolChange(tool: ToolType | null): void {
 	// 切换工具时提交而不是丢弃正在输入的文字
 	if (state.textEditing) commitText();
 	state.tool = tool;
-	if (tool === 'text') state.width = TEXT_FONT_SIZE;
-	else if (tool === 'mosaic') state.width = 8;
-	else if (tool) state.width = 2;
+	// 每个工具带自己的描边默认值：文字默认不描边（白描边），图形默认红 2px
+	if (tool === 'text') {
+		state.width = TEXT_FONT_SIZE;
+		state.strokeEnabled = false;
+		state.strokeWidth = TEXT_STROKE_WIDTH;
+		state.strokeColor = DEFAULT_STROKE_COLOR;
+	} else if (tool === 'mosaic') {
+		state.width = 8;
+	} else if (tool) {
+		state.width = 2;
+		state.strokeEnabled = true;
+		state.strokeWidth = 2;
+	}
 	// 工具切换后指针样式交给 CSS，等下一次 pointermove 再按命中结果刷新
 	setCursor('');
 	repaint();
@@ -1064,7 +1078,8 @@ function onWidthChange(value: number): void {
 }
 
 function onStrokeWidthChange(value: number): void {
-	state.strokeWidth = value;
+	// 手输框放行 0.1 起的任意值，这里再兜一次底
+	state.strokeWidth = Math.max(MIN_STROKE_WIDTH, Math.round(value * 100) / 100);
 }
 
 function onStrokeColorChange(value: string): void {
@@ -1247,12 +1262,23 @@ function onResize(): void {
 
 function onKeyDown(event: KeyboardEvent): void {
 	if (!state.visible) return;
+	const target = event.target as HTMLElement | null;
+	const tag = target?.tagName;
+	const isField = tag === 'INPUT' || tag === 'TEXTAREA' || !!target?.isContentEditable;
 	if (event.key === 'Escape') {
+		// 工具栏里的手输框：Esc 只退出输入，不关掉整个截图
+		if (tag === 'INPUT') {
+			event.preventDefault();
+			target?.blur();
+			return;
+		}
 		event.preventDefault();
 		if (state.textEditing) cancelText();
 		else cancel();
 		return;
 	}
+	// 输入框里的其它按键交给控件自己处理（如 Ctrl+Z 撤销输入、Enter 换行）
+	if (isField) return;
 	if ((event.ctrlKey || event.metaKey) && (event.key === 'z' || event.key === 'Z')) {
 		if (state.textEditing) return;
 		event.preventDefault();

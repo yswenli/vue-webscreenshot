@@ -31,7 +31,7 @@ Adding a "screenshot feedback" feature usually drags in a screenshot library, ba
 - **Zero backend**: `getDisplayMedia` capture + Canvas composition, all inside the user's browser — no network requests at all.
 - **Plug & play**: a single `<WebScreenshot />` tag, controlled with `v-model:show`; three lines of code to integrate.
 - **Cross-browser**: Chrome / Edge / 360 Speed mode and macOS Safari 13+ share one implementation; Safari's clipboard gesture restriction is handled inside the component.
-- **WeChat-screenshot experience**: six annotation tools — rectangle, ellipse, arrow, brush, mosaic and text — with thickness presets, a six-color palette and one-step undo.
+- **WeChat-screenshot experience**: six annotation tools — rectangle, ellipse, arrow, brush, mosaic and text — with hand-typed stroke widths, a six-color palette and one-step undo.
 - **Local & privacy-safe**: the captured image never leaves the browser, ideal for privacy-sensitive workflows (support tickets, bug reports, design walkthroughs).
 - **Crisp & sharp**: rendered at device-pixel-ratio (DPR) resolution, so annotations stay clean at full quality.
 
@@ -44,7 +44,7 @@ Adding a "screenshot feedback" feature usually drags in a screenshot library, ba
 | 🖱 Select & capture | Grab the full screen, drag to select, live pixel size readout |
 | 🖐 Adjustable selection | Green frame + 8 resize handles once fixed; drag the region when no tool is active, annotations follow |
 | ✏️ Six annotations | Rectangle / Ellipse / Arrow / Brush / Mosaic / Text |
-| 🎨 Fine control | Stroke on/off with three thickness levels · rectangle/ellipse fill switch and color · text outline · six-color palette · mosaic block size |
+| 🎨 Fine control | Stroke switch with hand-typed width from 0.1px · rectangle/ellipse fill switch and color · text outline · six-color palette · mosaic block size |
 | ⏪ Undo | `Ctrl / Cmd + Z` or the toolbar button — one step back; annotations, text edits, selection moves and resizes are all recorded |
 | 📋 One-click copy | Writes to clipboard first, falls back to download when unsupported; Safari's gesture requirement is handled |
 | 💾 Timestamped download | Auto-named files like `screenshot-20261104-153000.png` |
@@ -134,12 +134,12 @@ function onSuccess(payload: { mode: 'clipboard' | 'download'; blob: Blob }) {
 
 Toolbar: `Rectangle ｜ Ellipse ｜ Arrow ｜ Brush ｜ Mosaic ｜ Text ｜ Undo ｜ Download ｜ Cancel ｜ Done`. Selecting a drawing tool expands a secondary toolbar:
 
-- Rectangle / Ellipse: a `Stroke` switch + three thickness levels + six stroke colors, plus a `Fill` switch + six fill colors;
-- Arrow / Brush: a `Stroke` switch + three thickness levels + six stroke colors;
+- Rectangle / Ellipse: a `Stroke` switch + hand-typed width + six stroke colors, plus a `Fill` switch + six fill colors;
+- Arrow / Brush: a `Stroke` switch + hand-typed width + six stroke colors;
 - Mosaic: three block sizes;
-- Text: font size, text color, outline width and outline color.
+- Text: font size, text color, and the same `Stroke` switch + hand-typed width + six outline colors as the shapes.
 
-The default is a 2px red stroke with no fill. Turning off the stroke on a rectangle/ellipse leaves only the fill; turning off both produces no annotation. Turning off the stroke on an arrow/brush also skips drawing.
+The stroke width is typed by hand with a `0.1px` minimum: enter fine lines such as `0.3` or `1.5` directly, or nudge by `0.1` with the arrow keys. Stroke widths scale with the export ratio but never with the selection. The default is a 2px red stroke with no fill; text has no outline by default and starts at a 1px white outline when enabled. Turning off the stroke on a rectangle/ellipse leaves only the fill; turning off both produces no annotation. Turning off the stroke on an arrow/brush also skips drawing.
 
 The text input box auto-grows with content. `Enter` inserts a new line; `Ctrl / Cmd + Enter` or clicking outside the box confirms. On commit, text lands according to the actual layout inside the box (including line breaks), exactly where you saw it — no shifting. Switching tools, undo / download / done also commit the in-progress text first. With the Text tool still active, clicking existing text reopens it in place with its original content and style, so you can change the text, size, color, or outline; clearing the content and confirming deletes it, and all of these edits are undoable.
 
