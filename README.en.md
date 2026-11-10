@@ -44,7 +44,7 @@ Adding a "screenshot feedback" feature usually drags in a screenshot library, ba
 | 🖱 Select & capture | Grab the full screen, drag to select, live pixel size readout |
 | 🖐 Adjustable selection | Green frame + 8 resize handles once fixed; drag the region when no tool is active, annotations follow |
 | ✏️ Six annotations | Rectangle / Ellipse / Arrow / Brush / Mosaic / Text |
-| 🎨 Fine control | Three thickness levels (shapes/brush) · six-color palette · mosaic block size · text size and outline |
+| 🎨 Fine control | Stroke on/off with three thickness levels · rectangle/ellipse fill switch and color · text outline · six-color palette · mosaic block size |
 | ⏪ Undo | `Ctrl / Cmd + Z` or the toolbar button — one step back; annotations, text edits, selection moves and resizes are all recorded |
 | 📋 One-click copy | Writes to clipboard first, falls back to download when unsupported; Safari's gesture requirement is handled |
 | 💾 Timestamped download | Auto-named files like `screenshot-20261104-153000.png` |
@@ -132,7 +132,14 @@ function onSuccess(payload: { mode: 'clipboard' | 'download'; blob: Blob }) {
 
 ### Usage notes
 
-Toolbar: `Rectangle ｜ Ellipse ｜ Arrow ｜ Brush ｜ Mosaic ｜ Text ｜ Undo ｜ Download ｜ Cancel ｜ Done`. Selecting a drawing tool expands a secondary toolbar: shapes/brush get three thickness levels and a six-color palette, mosaic only gets block size, text gets font size, text color, and outline width + outline color. Default is red, 2px.
+Toolbar: `Rectangle ｜ Ellipse ｜ Arrow ｜ Brush ｜ Mosaic ｜ Text ｜ Undo ｜ Download ｜ Cancel ｜ Done`. Selecting a drawing tool expands a secondary toolbar:
+
+- Rectangle / Ellipse: a `Stroke` switch + three thickness levels + six stroke colors, plus a `Fill` switch + six fill colors;
+- Arrow / Brush: a `Stroke` switch + three thickness levels + six stroke colors;
+- Mosaic: three block sizes;
+- Text: font size, text color, outline width and outline color.
+
+The default is a 2px red stroke with no fill. Turning off the stroke on a rectangle/ellipse leaves only the fill; turning off both produces no annotation. Turning off the stroke on an arrow/brush also skips drawing.
 
 The text input box auto-grows with content. `Enter` inserts a new line; `Ctrl / Cmd + Enter` or clicking outside the box confirms. On commit, text lands according to the actual layout inside the box (including line breaks), exactly where you saw it — no shifting. Switching tools, undo / download / done also commit the in-progress text first. With the Text tool still active, clicking existing text reopens it in place with its original content and style, so you can change the text, size, color, or outline; clearing the content and confirming deletes it, and all of these edits are undoable.
 

@@ -18,12 +18,16 @@ interface BaseOp {
 	color: string;
 	/** 线宽、字号或马赛克块大小，单位 CSS 像素 */
 	width: number;
+	/** 是否绘制描边；缺省视为 true，仅矩形/椭圆/箭头/画笔使用 */
+	stroke?: boolean;
 }
 
 /** 以矩形表达的图形；矩形已归一化（w/h 非负），不携带方向 */
 export interface RectShapeOp extends BaseOp {
 	type: 'rect' | 'ellipse' | 'mosaic';
 	rect: Rect;
+	/** 填充色；null 或缺省表示不填充，仅矩形/椭圆使用 */
+	fill?: string | null;
 }
 
 /** 箭头必须保留起止顺序：归一化成矩形会丢掉方向，画出来会指向反方向 */
@@ -171,6 +175,10 @@ function drawOp(ctx: CanvasRenderingContext2D, op: AnnotationOp, opt: DrawOption
 }
 
 function drawRectShape(ctx: CanvasRenderingContext2D, op: RectShapeOp, opt: DrawOption): void {
+	const hasStroke = op.stroke !== false;
+	const fill = op.fill || null;
+	// 描边与填充都关掉时什么都不画
+	if (!hasStroke && !fill) return;
 	const x = opt.offsetX + op.rect.x * opt.scale;
 	const y = opt.offsetY + op.rect.y * opt.scale;
 	const w = op.rect.w * opt.scale;
@@ -178,16 +186,18 @@ function drawRectShape(ctx: CanvasRenderingContext2D, op: RectShapeOp, opt: Draw
 	const lineWidth = Math.max(1, op.width * opt.widthScale);
 	ctx.save();
 	ctx.strokeStyle = op.color;
-	ctx.fillStyle = op.color;
+	ctx.fillStyle = fill || op.color;
 	ctx.lineWidth = lineWidth;
 	ctx.lineCap = 'round';
 	ctx.lineJoin = 'round';
 	if (op.type === 'rect') {
-		ctx.strokeRect(x, y, w, h);
+		if (fill) ctx.fillRect(x, y, w, h);
+		if (hasStroke) ctx.strokeRect(x, y, w, h);
 	} else {
 		ctx.beginPath();
 		ctx.ellipse(x + w / 2, y + h / 2, Math.max(w / 2, 0.5), Math.max(h / 2, 0.5), 0, 0, Math.PI * 2);
-		ctx.stroke();
+		if (fill) ctx.fill();
+		if (hasStroke) ctx.stroke();
 	}
 	ctx.restore();
 }
@@ -196,6 +206,7 @@ function drawRectShape(ctx: CanvasRenderingContext2D, op: RectShapeOp, opt: Draw
 const ARROW_HEAD_ANGLE = Math.PI / 7;
 
 function drawArrow(ctx: CanvasRenderingContext2D, op: ArrowOp, opt: DrawOption): void {
+	if (op.stroke === false) return;
 	const x1 = opt.offsetX + op.from.x * opt.scale;
 	const y1 = opt.offsetY + op.from.y * opt.scale;
 	const x2 = opt.offsetX + op.to.x * opt.scale;
@@ -229,6 +240,7 @@ function drawArrow(ctx: CanvasRenderingContext2D, op: ArrowOp, opt: DrawOption):
 }
 
 function drawBrush(ctx: CanvasRenderingContext2D, op: BrushOp, opt: DrawOption): void {
+	if (op.stroke === false) return;
 	const points = op.points;
 	if (!points.length) return;
 	const lineWidth = Math.max(1, op.width * opt.widthScale);

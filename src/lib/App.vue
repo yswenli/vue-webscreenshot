@@ -37,6 +37,10 @@
 				:stroke-color="state.strokeColor"
 				:stroke-widths="STROKE_WIDTHS"
 				:stroke-colors="COLORS"
+				:stroke-enabled="state.strokeEnabled"
+				:fill-enabled="state.fillEnabled"
+				:fill-color="state.fillColor"
+				:fill-colors="COLORS"
 				:color="state.color"
 				:anchor="state.sel"
 				:can-undo="state.history.length > 0"
@@ -44,6 +48,9 @@
 				@update:width="onWidthChange"
 				@update:stroke-width="onStrokeWidthChange"
 				@update:stroke-color="onStrokeColorChange"
+				@update:stroke-enabled="onStrokeEnabledChange"
+				@update:fill-enabled="onFillEnabledChange"
+				@update:fill-color="onFillColorChange"
 				@update:color="onColorChange"
 				@undo="undo"
 				@download="onDownload"
@@ -145,6 +152,12 @@ interface ShotState {
 	tool: ToolType | null;
 	width: number;
 	color: string;
+	/** 矩形/椭圆/箭头/画笔是否绘制描边 */
+	strokeEnabled: boolean;
+	/** 矩形/椭圆是否填充 */
+	fillEnabled: boolean;
+	/** 矩形/椭圆的填充色 */
+	fillColor: string;
 	textEditing: boolean;
 	textValue: string;
 	/** 正在编辑已有文字时的标注下标；null 表示新建文字 */
@@ -174,6 +187,9 @@ const state = reactive<ShotState>({
 	tool: null,
 	width: 2,
 	color: COLORS[0],
+	strokeEnabled: true,
+	fillEnabled: false,
+	fillColor: COLORS[0],
 	textEditing: false,
 	textValue: '',
 	editingTextIndex: null,
@@ -353,6 +369,9 @@ function resetState(): void {
 	state.draft = null;
 	state.tool = null;
 	state.width = 2;
+	state.strokeEnabled = true;
+	state.fillEnabled = false;
+	state.fillColor = COLORS[0];
 	state.textEditing = false;
 	state.textValue = '';
 	state.editingTextIndex = null;
@@ -378,6 +397,9 @@ function resetForShot(): void {
 	state.tool = null;
 	state.width = 2;
 	state.color = COLORS[0];
+	state.strokeEnabled = true;
+	state.fillEnabled = false;
+	state.fillColor = COLORS[0];
 	state.textEditing = false;
 	state.textValue = '';
 	state.editingTextIndex = null;
@@ -639,20 +661,48 @@ function repaint(): void {
 function buildOp(tool: ToolType, from: Point, to: Point, points: Point[]): AnnotationOp | null {
 	if (tool === 'text') return null;
 	if (tool === 'brush') {
-		return { type: 'brush', color: state.color, width: state.width, points: points.map((p) => ({ ...p })) };
+		return {
+			type: 'brush',
+			color: state.color,
+			width: state.width,
+			stroke: state.strokeEnabled,
+			points: points.map((p) => ({ ...p }))
+		};
 	}
 	// 箭头保留起止顺序，不能用归一化矩形
 	if (tool === 'arrow') {
-		return { type: 'arrow', color: state.color, width: state.width, from: { ...from }, to: { ...to } };
+		return {
+			type: 'arrow',
+			color: state.color,
+			width: state.width,
+			stroke: state.strokeEnabled,
+			from: { ...from },
+			to: { ...to }
+		};
 	}
-	return { type: tool, color: state.color, width: state.width, rect: normalizeRect(from, to) };
+	const rect = normalizeRect(from, to);
+	// 马赛克没有描边/填充概念，只按块大小取样
+	if (tool === 'mosaic') return { type: 'mosaic', color: state.color, width: state.width, rect };
+	return {
+		type: tool,
+		color: state.color,
+		width: state.width,
+		stroke: state.strokeEnabled,
+		fill: state.fillEnabled ? state.fillColor : null,
+		rect
+	};
 }
 
 function isMeaningful(op: AnnotationOp): boolean {
-	if (op.type === 'brush') return op.points.length > 1;
+	if (op.type === 'brush') return op.stroke !== false && op.points.length > 1;
 	if (op.type === 'text') return op.text.trim().length > 0;
 	// 水平/垂直箭头的 w 或 h 为 0，只能按长度判
-	if (op.type === 'arrow') return Math.hypot(op.to.x - op.from.x, op.to.y - op.from.y) >= 4;
+	if (op.type === 'arrow') {
+		if (op.stroke === false) return false;
+		return Math.hypot(op.to.x - op.from.x, op.to.y - op.from.y) >= 4;
+	}
+	// 矩形/椭圆描边与填充都关掉时落不出任何像素，不生成标注
+	if (op.type !== 'mosaic' && op.stroke === false && !op.fill) return false;
 	return op.rect.w >= 2 && op.rect.h >= 2;
 }
 
@@ -1019,6 +1069,25 @@ function onStrokeWidthChange(value: number): void {
 
 function onStrokeColorChange(value: string): void {
 	state.strokeColor = value;
+}
+
+function onStrokeEnabledChange(value: boolean): void {
+	state.strokeEnabled = value;
+	// 关掉描边后图形可能一笔都画不出来，提前提示，避免用户误以为工具失效
+	if (!value && (state.tool === 'arrow' || state.tool === 'brush')) {
+		setToast('已关闭描边，箭头与画笔将不会绘制');
+	} else if (!value && (state.tool === 'rect' || state.tool === 'ellipse') && !state.fillEnabled) {
+		setToast('描边与填充均已关闭，将不会绘制');
+	}
+}
+
+function onFillEnabledChange(value: boolean): void {
+	state.fillEnabled = value;
+	if (!value && !state.strokeEnabled) setToast('描边与填充均已关闭，将不会绘制');
+}
+
+function onFillColorChange(value: string): void {
+	state.fillColor = value;
 }
 
 function onColorChange(value: string): void {

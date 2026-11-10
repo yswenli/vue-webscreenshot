@@ -18,20 +18,24 @@
 			<button type="button" class="vws-tb__btn is-primary" title="完成 (Enter)" v-html="icons.check" @click="emit('confirm')" />
 		</div>
 		<div v-if="modelValue" class="vws-tb__options">
-			<template v-if="showWidths">
+			<!-- 马赛克：只有块大小 -->
+			<template v-if="modelValue === 'mosaic'">
+				<span class="vws-tb__label">块大小</span>
 				<button
 					v-for="w in widths"
-					:key="w"
+					:key="`mosaic-${w}`"
 					type="button"
 					class="vws-tb__dot"
 					:class="{ 'is-active': width === w }"
-					:title="`粗细 ${w}`"
+					:title="`块大小 ${w}`"
 					@click="emit('update:width', w)"
 				>
 					<span :style="dotStyle(w)" />
 				</button>
 			</template>
-			<template v-if="showSizes">
+
+			<!-- 文字：字号 + 文字颜色 + 描边 -->
+			<template v-else-if="modelValue === 'text'">
 				<button
 					v-for="s in fontSizes"
 					:key="s"
@@ -43,22 +47,18 @@
 				>
 					{{ s }}
 				</button>
-			</template>
-			<span v-if="(showWidths || showSizes) && showColors" class="vws-tb__sep" />
-			<template v-if="showColors">
+				<span class="vws-tb__sep" />
 				<button
 					v-for="c in colors"
 					:key="c"
 					type="button"
 					class="vws-tb__color"
 					:class="{ 'is-active': color === c }"
-					:title="c"
+					:title="`文字色 ${c}`"
 					@click="emit('update:color', c)"
 				>
 					<span :style="{ background: c }" />
 				</button>
-			</template>
-			<template v-if="showStroke">
 				<span class="vws-tb__sep" />
 				<span class="vws-tb__label">描边</span>
 				<button
@@ -86,6 +86,75 @@
 					</button>
 				</template>
 			</template>
+
+			<!-- 矩形 / 椭圆 / 箭头 / 画笔：描边；矩形与椭圆另有填充 -->
+			<template v-else>
+				<span class="vws-tb__label">描边</span>
+				<button
+					type="button"
+					class="vws-tb__switch"
+					:class="{ 'is-on': strokeEnabled }"
+					role="switch"
+					:aria-checked="strokeEnabled"
+					:title="strokeEnabled ? '关闭描边' : '开启描边'"
+					@click="emit('update:strokeEnabled', !strokeEnabled)"
+				>
+					<span class="vws-tb__knob" />
+				</button>
+				<template v-if="strokeEnabled">
+					<button
+						v-for="w in widths"
+						:key="`width-${w}`"
+						type="button"
+						class="vws-tb__dot"
+						:class="{ 'is-active': width === w }"
+						:title="`粗细 ${w}`"
+						@click="emit('update:width', w)"
+					>
+						<span :style="dotStyle(w)" />
+					</button>
+					<span class="vws-tb__sep" />
+					<button
+						v-for="c in colors"
+						:key="`stroke-main-${c}`"
+						type="button"
+						class="vws-tb__color"
+						:class="{ 'is-active': color === c }"
+						:title="`描边色 ${c}`"
+						@click="emit('update:color', c)"
+					>
+						<span :style="{ background: c }" />
+					</button>
+				</template>
+				<template v-if="showFill">
+					<span class="vws-tb__sep" />
+					<span class="vws-tb__label">填充</span>
+					<button
+						type="button"
+						class="vws-tb__switch"
+						:class="{ 'is-on': fillEnabled }"
+						role="switch"
+						:aria-checked="fillEnabled"
+						:title="fillEnabled ? '关闭填充' : '开启填充'"
+						@click="emit('update:fillEnabled', !fillEnabled)"
+					>
+						<span class="vws-tb__knob" />
+					</button>
+					<template v-if="fillEnabled">
+						<button
+							v-for="c in fillColors"
+							:key="`fill-${c}`"
+							type="button"
+							class="vws-tb__color"
+							:class="{ 'is-active': fillColor === c }"
+							:title="`填充色 ${c}`"
+							@click="emit('update:fillColor', c)"
+						>
+							<span :style="{ background: c }" />
+						</button>
+					</template>
+				</template>
+			</template>
 		</div>
 	</div>
 </template>
@@ -111,6 +180,14 @@ const props = defineProps<{
 	strokeWidth: number;
 	/** 文字描边颜色 */
 	strokeColor: string;
+	/** 矩形/椭圆/箭头/画笔是否开启描边 */
+	strokeEnabled: boolean;
+	/** 矩形/椭圆是否开启填充 */
+	fillEnabled: boolean;
+	/** 矩形/椭圆的填充色 */
+	fillColor: string;
+	/** 填充色档位 */
+	fillColors: string[];
 	color: string;
 	anchor: Rect;
 	canUndo: boolean;
@@ -121,6 +198,9 @@ const emit = defineEmits<{
 	(e: 'update:width', value: number): void;
 	(e: 'update:strokeWidth', value: number): void;
 	(e: 'update:strokeColor', value: string): void;
+	(e: 'update:strokeEnabled', value: boolean): void;
+	(e: 'update:fillEnabled', value: boolean): void;
+	(e: 'update:fillColor', value: string): void;
 	(e: 'update:color', value: string): void;
 	(e: 'undo'): void;
 	(e: 'download'): void;
@@ -142,10 +222,7 @@ const colors = COLORS;
 const rootRef = ref<HTMLElement | null>(null);
 const size = reactive({ w: 0, h: 0 });
 
-const showWidths = computed(() => !!props.modelValue && props.modelValue !== 'text');
-const showSizes = computed(() => props.modelValue === 'text');
-const showColors = computed(() => !!props.modelValue && props.modelValue !== 'mosaic');
-const showStroke = computed(() => props.modelValue === 'text');
+const showFill = computed(() => props.modelValue === 'rect' || props.modelValue === 'ellipse');
 
 function dotStyle(width: number): Record<string, string> {
 	const d = Math.max(5, Math.min(14, width * 1.5));
@@ -237,6 +314,10 @@ onUnmounted(() => {
 .vws-tb__options {
 	gap: 6px;
 	padding: 4px 8px;
+	max-width: calc(100vw - 16px);
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	row-gap: 4px;
 }
 
 .vws-tb__btn {
@@ -339,6 +420,37 @@ onUnmounted(() => {
 	font-size: 11px;
 	line-height: 1;
 	white-space: nowrap;
+}
+
+.vws-tb__switch {
+	position: relative;
+	width: 28px;
+	height: 16px;
+	padding: 0;
+	border: none;
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.24);
+	cursor: pointer;
+	transition: background 0.15s ease;
+}
+
+.vws-tb__switch.is-on {
+	background: #1677ff;
+}
+
+.vws-tb__knob {
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	background: #fff;
+	transition: transform 0.15s ease;
+}
+
+.vws-tb__switch.is-on .vws-tb__knob {
+	transform: translateX(12px);
 }
 
 .vws-tb__color {
