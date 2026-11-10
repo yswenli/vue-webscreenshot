@@ -34,7 +34,7 @@
 				<input
 					class="vws-tb__num"
 					type="number"
-					min="0.1"
+					:min="MIN_SIZE"
 					step="0.1"
 					inputmode="decimal"
 					:value="sizeField.draft.value"
@@ -78,7 +78,7 @@
 					<input
 						class="vws-tb__num"
 						type="number"
-						min="0.1"
+						:min="MIN_SIZE"
 						step="0.1"
 						inputmode="decimal"
 						:value="strokeField.draft.value"
@@ -133,6 +133,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { icons } from './icons';
 import type { Rect, ToolType } from './annotation';
+import { MIN_SIZE, useNumberField } from './numberField';
 
 const props = defineProps<{
 	modelValue: ToolType | null;
@@ -190,48 +191,6 @@ const sizeLabel = computed(() => {
 });
 
 const showFill = computed(() => props.modelValue === 'rect' || props.modelValue === 'ellipse');
-
-function formatNumber(value: number): string {
-	return String(Math.round(value * 100) / 100);
-}
-
-/**
- * 手输数字框：输入过程中允许出现空值 / 非法内容，失焦或回车时再纠正。
- * 主体尺寸与描边宽度共用这套逻辑，最小值统一 0.1px。
- */
-function useNumberField(get: () => number, set: (value: number) => void) {
-	const draft = ref(formatNumber(get()));
-
-	watch(get, (value) => {
-		const current = Number(draft.value);
-		if (!Number.isFinite(current) || Math.abs(current - value) > 1e-6) draft.value = formatNumber(value);
-	});
-
-	function parse(raw: string): number | null {
-		if (!raw.trim()) return null;
-		const value = Number(raw);
-		if (!Number.isFinite(value)) return null;
-		return Math.max(0.1, Math.round(value * 100) / 100);
-	}
-
-	function onInput(event: Event): void {
-		draft.value = (event.target as HTMLInputElement).value;
-		const value = parse(draft.value);
-		if (value !== null) set(value);
-	}
-
-	function onCommit(): void {
-		const value = parse(draft.value);
-		if (value === null) {
-			draft.value = formatNumber(get());
-			return;
-		}
-		draft.value = formatNumber(value);
-		set(value);
-	}
-
-	return { draft, onInput, onCommit };
-}
 
 const sizeField = useNumberField(
 	() => props.width,

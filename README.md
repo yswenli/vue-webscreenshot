@@ -164,11 +164,12 @@ Safari 上点「完成」同样优先复制，只有剪贴板被系统或浏览�
 npm install
 npm run dev     # 打开 index.html 里的演示页
 npm run build   # vue-tsc 类型检查 + 产出 dist
+npm test        # vitest：数字输入框与文字命中盒回归用例
 ```
 
 ## 参与贡献
 
-欢迎提交 [Issue](https://github.com/yswenli/vue-webscreenshot/issues) 与 [Pull Request](https://github.com/yswenli/vue-webscreenshot/pulls)。代码有严格 TypeScript 类型约束，提交前请先通过 `npm run build`。
+欢迎提交 [Issue](https://github.com/yswenli/vue-webscreenshot/issues) 与 [Pull Request](https://github.com/yswenli/vue-webscreenshot/pulls)。代码有严格 TypeScript 类型约束，提交前请先通过 `npm run build` 和 `npm test`。
 
 ## License
 

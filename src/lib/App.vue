@@ -23,6 +23,7 @@
 				spellcheck="false"
 				placeholder="输入文字"
 				@pointerdown.stop
+				@contextmenu.stop
 				@input="syncTextSize"
 				@keydown="onTextKeyDown"
 				@blur="onTextBlur"
@@ -67,12 +68,14 @@ import {
 	normalizeRect,
 	renderSelection,
 	scaleOps,
+	textBounds,
 	translateOps,
 	TEXT_FONT_FAMILY,
 	TEXT_FONT_SIZE,
 	TEXT_LINE_HEIGHT_RATIO
 } from './annotation';
 import type { AnnotationOp, Point, Rect, TextOp, ToolType } from './annotation';
+import { clampSize } from './numberField';
 
 /** 主体默认颜色：图形线条色 / 文字颜色 */
 const DEFAULT_COLOR = '#ff4d4f';
@@ -94,9 +97,7 @@ const MIN_SEL = 5;
 const HISTORY_LIMIT = 100;
 /** 文字字号下拉档位，单位 CSS 像素，默认 12 */
 const FONT_SIZES = [12, 14, 16, 18, 20, 24, 32];
-/** 主体尺寸与描边宽度下限，单位 CSS 像素；所有尺寸都手输 */
-const MIN_SIZE = 0.1;
-/** 描边默认宽度，单位 CSS 像素 */
+/** 描边默认宽度，单位 CSS 像素；主体尺寸与描边下限统一由 numberField 的 MIN_SIZE 约束 */
 const DEFAULT_STROKE_WIDTH = 0.1;
 /** 输入框内容内边距（与 .vws-text 的 padding 保持一致） */
 const TEXT_PAD_X = 4;
@@ -222,8 +223,8 @@ let frame: HTMLCanvasElement | null = null;
 let toastTimer = 0;
 let drag: Drag | null = null;
 let bodyOverflow = '';
-/** 文字测量用的离屏上下文，按需创建 */
-let measureCtx: CanvasRenderingContext2D | null = null;
+/** 只有真正锁过才恢复，避免 show=false 挂载 / 卸载时清掉宿主自己设置的 body overflow */
+let bodyLocked = false;
 /**
  * 打开文字输入框的瞬间会由浏览器的默认聚焦行为触发一次 blur。
  * 用这个开关压掉那次 blur，避免刚打开的输入框被立刻提交。
@@ -233,10 +234,13 @@ let ignoreBlur = false;
 function lockBody(): void {
 	bodyOverflow = document.body.style.overflow;
 	document.body.style.overflow = 'hidden';
+	bodyLocked = true;
 }
 
 function unlockBody(): void {
+	if (!bodyLocked) return;
 	document.body.style.overflow = bodyOverflow;
+	bodyLocked = false;
 }
 
 const fontSizes = FONT_SIZES;
@@ -487,37 +491,15 @@ function insideSelection(sel: Rect, x: number, y: number): boolean {
 	return x >= sel.x && x <= sel.x + sel.w && y >= sel.y && y <= sel.y + sel.h;
 }
 
-function getMeasureCtx(): CanvasRenderingContext2D | null {
-	if (!measureCtx) measureCtx = document.createElement('canvas').getContext('2d');
-	return measureCtx;
-}
-
-/**
- * 文字标注在静帧坐标下的包围盒，用于命中已落字的文字。
- * 行高取画布实际换行步进，宽度按最长一行测量，宁可稍大一点方便点中。
- */
-function textBounds(op: TextOp): Rect {
-	const fontPx = Math.max(6, op.width);
-	const lines = op.text.split('\n');
-	let width = 0;
-	const ctx = getMeasureCtx();
-	if (ctx) {
-		ctx.font = `${fontPx}px ${TEXT_FONT_FAMILY}`;
-		for (const line of lines) width = Math.max(width, ctx.measureText(line).width);
-	} else {
-		// 极端情况下取不到上下文，用字数粗估，保证还能点中
-		for (const line of lines) width = Math.max(width, line.length * fontPx * 0.6);
-	}
-	return { x: op.x, y: op.y, w: width, h: lines.length * fontPx * TEXT_LINE_HEIGHT_RATIO };
-}
-
 /** 从后往前找落点下的文字标注；返回 -1 表示没点到 */
 function textIndexAt(p: Point): number {
-	const pad = 4 * frameRatio.value;
+	const ratio = frameRatio.value;
+	const pad = 4 * ratio;
 	for (let i = state.ops.length - 1; i >= 0; i--) {
 		const op = state.ops[i];
 		if (!op || op.type !== 'text') continue;
-		const box = textBounds(op);
+		// 包围盒按静帧像素计算，必须带上显示倍率，否则点不到文字的大半区域
+		const box = textBounds(op, ratio);
 		if (p.x >= box.x - pad && p.x <= box.x + box.w + pad && p.y >= box.y - pad && p.y <= box.y + box.h + pad) return i;
 	}
 	return -1;
@@ -719,8 +701,12 @@ function onPointerDown(event: PointerEvent): void {
 	if (state.capturing) return;
 	// 只响应主键/触摸，右键与多指副指针不进入拖拽
 	if (event.button !== 0 || !event.isPrimary) return;
-	// 输入框的 blur 晚于 pointerdown，等 blur 提交会让这一笔点击被吞掉
-	if (state.textEditing) commitText();
+	// 输入框的 blur 晚于 pointerdown，这里先把文字落字；
+	// 这一击只用于「确认」，不再继续新建文本框或绘制，避免点外部确认时又弹出一个空输入框
+	if (state.textEditing) {
+		commitText();
+		return;
+	}
 	const host = event.currentTarget as HTMLElement | null;
 	if (host && typeof host.setPointerCapture === 'function') {
 		try {
@@ -1074,12 +1060,12 @@ function onToolChange(tool: ToolType | null): void {
 }
 
 function onWidthChange(value: number): void {
-	state.width = Math.max(MIN_SIZE, Math.round(value * 100) / 100);
+	state.width = clampSize(value);
 }
 
 function onStrokeWidthChange(value: number): void {
 	// 手输框放行 0.1 起的任意值，这里再兜一次底
-	state.strokeWidth = Math.max(MIN_SIZE, Math.round(value * 100) / 100);
+	state.strokeWidth = clampSize(value);
 }
 
 function onStrokeColorChange(value: string): void {

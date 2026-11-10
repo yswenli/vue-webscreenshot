@@ -47,6 +47,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
+    "test": "vitest run",
     "preview": "vite preview",
     "prepublishOnly": "npm run build"
   },
@@ -59,6 +60,7 @@
     "typescript": "^5.4.5",
     "vite": "^4.5.5",
     "vite-plugin-dts": "^3.9.1",
+    "vitest": "^2.1.9",
     "vue": "^3.3.4",
     "vue-tsc": "^2.0.29"
   }

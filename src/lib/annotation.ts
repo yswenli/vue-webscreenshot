@@ -86,6 +86,33 @@ export const TEXT_FONT_SIZE = 12;
 /** 文字标注行高倍数，画布换行与输入框行距共用 */
 export const TEXT_LINE_HEIGHT_RATIO = 1.35;
 
+export type TextMeasurer = (text: string, fontPx: number) => number;
+
+let measureCanvas: HTMLCanvasElement | null = null;
+
+/** 默认文字测量：浏览器里用真实字体度量，无 DOM 时按字数粗估 */
+function defaultMeasureText(text: string, fontPx: number): number {
+	if (typeof document === 'undefined') return text.length * fontPx * 0.6;
+	if (!measureCanvas) measureCanvas = document.createElement('canvas');
+	const ctx = measureCanvas.getContext('2d');
+	if (!ctx) return text.length * fontPx * 0.6;
+	ctx.font = `${fontPx}px ${TEXT_FONT_FAMILY}`;
+	return ctx.measureText(text).width;
+}
+
+/**
+ * 文字标注在静帧坐标下的包围盒，用于命中已落字的文字。
+ * 坐标是静帧像素，字号是 CSS 像素，`ratio` 是两者的显示倍率；
+ * 量宽高时必须乘上它，否则高倍屏上命中盒会比实际文字小一整圈。
+ */
+export function textBounds(op: TextOp, ratio: number, measure: TextMeasurer = defaultMeasureText): Rect {
+	const fontPx = Math.max(6, op.width) * ratio;
+	const lines = op.text.split('\n');
+	let width = 0;
+	for (const line of lines) width = Math.max(width, measure(line, fontPx));
+	return { x: op.x, y: op.y, w: width, h: lines.length * fontPx * TEXT_LINE_HEIGHT_RATIO };
+}
+
 let scratch: HTMLCanvasElement | null = null;
 
 function getScratch(w: number, h: number): HTMLCanvasElement {

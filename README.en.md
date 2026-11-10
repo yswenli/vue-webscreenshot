@@ -164,11 +164,12 @@ Kept transparent so you can judge whether it fits:
 npm install
 npm run dev     # opens the demo page in index.html
 npm run build   # vue-tsc type check + produce dist
+npm test        # vitest: regressions for the number field and text hit box
 ```
 
 ## Contributing
 
-Issues and pull requests are welcome via the [issue tracker](https://github.com/yswenli/vue-webscreenshot/issues) and [pull requests](https://github.com/yswenli/vue-webscreenshot/pulls). The codebase enforces strict TypeScript; please make sure `npm run build` passes before submitting.
+Issues and pull requests are welcome via the [issue tracker](https://github.com/yswenli/vue-webscreenshot/issues) and [pull requests](https://github.com/yswenli/vue-webscreenshot/pulls). The codebase enforces strict TypeScript; please make sure `npm run build` and `npm test` pass before submitting.
 
 ## License
 
