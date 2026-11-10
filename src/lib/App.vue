@@ -4,7 +4,7 @@
 			v-if="state.visible"
 			class="vws-root"
 			:class="{ 'is-tool': !!state.tool, 'is-selecting': state.stage === 'selection' }"
-			:style="{ zIndex: String(props.zIndex) }"
+			:style="{ zIndex: String(props.zIndex), cursor: state.cursor || undefined }"
 			@contextmenu.prevent
 			@pointerdown="onPointerDown"
 			@pointermove="onPointerMove"
@@ -53,10 +53,29 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import Toolbar from './toolbar.vue';
 import { captureScreen, isCaptureSupported } from './capture';
-import { drawOps, normalizeRect, renderSelection, TEXT_FONT_FAMILY, TEXT_FONT_SIZE, TEXT_LINE_HEIGHT_RATIO } from './annotation';
+import {
+	drawOps,
+	normalizeRect,
+	renderSelection,
+	scaleOps,
+	translateOps,
+	TEXT_FONT_FAMILY,
+	TEXT_FONT_SIZE,
+	TEXT_LINE_HEIGHT_RATIO
+} from './annotation';
 import type { AnnotationOp, Point, Rect, ToolType } from './annotation';
 
 const COLORS = ['#ff4d4f', '#ffd400', '#22c55e', '#1677ff', '#111111', '#ffffff'];
+/** 选区边框与控制点颜色 */
+const FRAME_COLOR = '#22c55e';
+/** 控制点边长，单位 CSS 像素 */
+const HANDLE_SIZE = 8;
+/** 控制点命中半径（在边长之外再放宽一点，方便点中） */
+const HANDLE_HIT = HANDLE_SIZE / 2 + 4;
+/** 边框命中容差，单位 CSS 像素 */
+const EDGE_HIT = 4;
+/** 选区最小尺寸，单位 CSS 像素 */
+const MIN_SEL = 5;
 /** 文字字号档位，单位 CSS 像素 */
 const FONT_SIZES = [12, 16, 20];
 /** 输入框内容内边距（与 .vws-text 的 padding 保持一致） */
@@ -113,6 +132,8 @@ interface ShotState {
 	/** 输入框当前高度，用于边界夹紧 */
 	textBoxH: number;
 	toast: string;
+	/** 当前光标样式；空串表示交回 CSS 默认值 */
+	cursor: string;
 }
 
 const state = reactive<ShotState>({
@@ -130,15 +151,27 @@ const state = reactive<ShotState>({
 	textValue: '',
 	textFrameAt: { x: 0, y: 0 },
 	textBoxH: textLineHeight(TEXT_FONT_SIZE) + TEXT_PAD_Y * 2,
-	toast: ''
+	toast: '',
+	cursor: ''
 });
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 const textInputRef = ref<HTMLTextAreaElement | null>(null);
 
+/** 控制点方向：先纵后横，便于用 includes 判断，如 'nw' / 'e' / 's' */
+type ResizeDir = 'n' | 's' | 'e' | 'w' | 'nw' | 'ne' | 'sw' | 'se';
+
+type Drag =
+	| { mode: 'select'; startCss: Point; startFrame: Point; points: Point[] }
+	| { mode: 'draw'; startCss: Point; startFrame: Point; points: Point[] }
+	| { mode: 'move'; startCss: Point; startSel: Rect; startOps: AnnotationOp[] }
+	| { mode: 'resize'; dir: ResizeDir; startSel: Rect; startOps: AnnotationOp[] };
+
+type HitTarget = { type: 'resize'; dir: ResizeDir } | { type: 'move' } | { type: 'draw' };
+
 let frame: HTMLCanvasElement | null = null;
 let toastTimer = 0;
-let drag: { mode: 'select' | 'draw'; startCss: Point; startFrame: Point; points: Point[] } | null = null;
+let drag: Drag | null = null;
 let bodyOverflow = '';
 
 function lockBody(): void {
@@ -280,6 +313,7 @@ function resetState(): void {
 	state.textEditing = false;
 	state.textValue = '';
 	state.toast = '';
+	state.cursor = '';
 	drag = null;
 	if (frame) {
 		frame.width = 0;
@@ -298,6 +332,7 @@ function resetForShot(): void {
 	state.color = COLORS[0];
 	state.textEditing = false;
 	state.textValue = '';
+	state.cursor = '';
 	drag = null;
 }
 
@@ -375,6 +410,98 @@ function insideSelection(sel: Rect, x: number, y: number): boolean {
 	return x >= sel.x && x <= sel.x + sel.w && y >= sel.y && y <= sel.y + sel.h;
 }
 
+/** 8 个控制点：四角 + 四边中点，坐标是选区边界上的 CSS 像素 */
+function handlePoints(sel: Rect): { dir: ResizeDir; x: number; y: number }[] {
+	const right = sel.x + sel.w;
+	const bottom = sel.y + sel.h;
+	const cx = sel.x + sel.w / 2;
+	const cy = sel.y + sel.h / 2;
+	return [
+		{ dir: 'nw', x: sel.x, y: sel.y },
+		{ dir: 'n', x: cx, y: sel.y },
+		{ dir: 'ne', x: right, y: sel.y },
+		{ dir: 'e', x: right, y: cy },
+		{ dir: 'se', x: right, y: bottom },
+		{ dir: 's', x: cx, y: bottom },
+		{ dir: 'sw', x: sel.x, y: bottom },
+		{ dir: 'w', x: sel.x, y: cy }
+	];
+}
+
+function resizeCursor(dir: ResizeDir): string {
+	switch (dir) {
+		case 'n':
+		case 's':
+			return 'ns-resize';
+		case 'e':
+		case 'w':
+			return 'ew-resize';
+		case 'nw':
+		case 'se':
+			return 'nwse-resize';
+		default:
+			return 'nesw-resize';
+	}
+}
+
+/**
+ * 命中测试：控制点 > 边框 > 选区内部。
+ * 只在选区定稿后生效；内部在未选工具时是移动，选了工具就是绘图。
+ */
+function hitTest(x: number, y: number): HitTarget | null {
+	if (state.stage !== 'annotate' || !state.sel) return null;
+	const sel = state.sel;
+	for (const h of handlePoints(sel)) {
+		if (Math.abs(x - h.x) <= HANDLE_HIT && Math.abs(y - h.y) <= HANDLE_HIT) return { type: 'resize', dir: h.dir };
+	}
+	const nearX = x >= sel.x - EDGE_HIT && x <= sel.x + sel.w + EDGE_HIT;
+	const nearY = y >= sel.y - EDGE_HIT && y <= sel.y + sel.h + EDGE_HIT;
+	if (nearX && nearY) {
+		const left = Math.abs(x - sel.x);
+		const right = Math.abs(x - (sel.x + sel.w));
+		const top = Math.abs(y - sel.y);
+		const bottom = Math.abs(y - (sel.y + sel.h));
+		let vertical: 'n' | 's' | '' = '';
+		let horizontal: 'w' | 'e' | '' = '';
+		if (Math.min(top, bottom) <= EDGE_HIT) vertical = top <= bottom ? 'n' : 's';
+		if (Math.min(left, right) <= EDGE_HIT) horizontal = left <= right ? 'w' : 'e';
+		// 先纵后横，保证拼出来是 'nw' / 'se' 这类规范顺序
+		if (vertical || horizontal) return { type: 'resize', dir: (vertical + horizontal) as ResizeDir };
+		if (insideSelection(sel, x, y)) return state.tool ? { type: 'draw' } : { type: 'move' };
+	}
+	return null;
+}
+
+function cursorForHit(hit: HitTarget | null): string {
+	if (!hit) return '';
+	if (hit.type === 'move') return 'move';
+	if (hit.type === 'draw') return state.tool === 'text' ? 'text' : 'crosshair';
+	return resizeCursor(hit.dir);
+}
+
+/** 只在光标真正变化时写回，避免每次 pointermove 都触发模板更新 */
+function setCursor(value: string): void {
+	if (state.cursor !== value) state.cursor = value;
+}
+
+function drawSelectionFrame(ctx: CanvasRenderingContext2D, sel: Rect): void {
+	ctx.save();
+	// 边框画在选区外侧，不遮挡截图内容
+	ctx.strokeStyle = FRAME_COLOR;
+	ctx.lineWidth = 2;
+	ctx.strokeRect(sel.x - 1, sel.y - 1, sel.w + 2, sel.h + 2);
+	ctx.fillStyle = '#fff';
+	for (const h of handlePoints(sel)) {
+		const x = Math.round(h.x - HANDLE_SIZE / 2);
+		const y = Math.round(h.y - HANDLE_SIZE / 2);
+		ctx.fillRect(x, y, HANDLE_SIZE, HANDLE_SIZE);
+		ctx.strokeStyle = FRAME_COLOR;
+		ctx.lineWidth = 1;
+		ctx.strokeRect(x + 0.5, y + 0.5, HANDLE_SIZE - 1, HANDLE_SIZE - 1);
+	}
+	ctx.restore();
+}
+
 function repaint(): void {
 	const canvas = canvasRef.value;
 	if (!canvas || !frame) return;
@@ -408,9 +535,14 @@ function repaint(): void {
 		drawOps(ctx, state.ops, option);
 		if (state.draft) drawOps(ctx, [state.draft], option);
 		ctx.restore();
-		ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
-		ctx.lineWidth = 1;
-		ctx.strokeRect(sel.x + 0.5, sel.y + 0.5, Math.max(0, sel.w - 1), Math.max(0, sel.h - 1));
+		if (state.stage === 'annotate') {
+			drawSelectionFrame(ctx, sel);
+		} else {
+			// 框选过程中先用细白线，定稿后才换成可操作的控制框
+			ctx.strokeStyle = 'rgba(255, 255, 255, 0.95)';
+			ctx.lineWidth = 1;
+			ctx.strokeRect(sel.x + 0.5, sel.y + 0.5, Math.max(0, sel.w - 1), Math.max(0, sel.h - 1));
+		}
 	}
 }
 
@@ -454,9 +586,27 @@ function onPointerDown(event: PointerEvent): void {
 		return;
 	}
 	const sel = state.sel;
+	if (!sel) return;
+	const hit = hitTest(event.clientX, event.clientY);
+	if (!hit) return;
+	if (hit.type === 'resize') {
+		// 快照下按下的选区与标注，后续每次移动都从快照重算，避免累积误差
+		drag = { mode: 'resize', dir: hit.dir, startSel: { ...sel }, startOps: state.ops.slice() };
+		setCursor(resizeCursor(hit.dir));
+		return;
+	}
+	if (hit.type === 'move') {
+		drag = {
+			mode: 'move',
+			startCss: { x: event.clientX, y: event.clientY },
+			startSel: { ...sel },
+			startOps: state.ops.slice()
+		};
+		setCursor('move');
+		return;
+	}
 	const tool = state.tool;
-	if (!sel || !tool) return;
-	if (!insideSelection(sel, event.clientX, event.clientY)) return;
+	if (!tool) return;
 	const p = clampToSelection(event.clientX, event.clientY);
 	if (tool === 'text') {
 		openTextEditor(p);
@@ -468,12 +618,61 @@ function onPointerDown(event: PointerEvent): void {
 	repaint();
 }
 
+/** 拖动选区：整体夹在画面范围内，标注按相同的画面位移跟随 */
+function moveSelection(event: PointerEvent): void {
+	if (!drag || drag.mode !== 'move') return;
+	const start = drag.startSel;
+	const d = state.display;
+	const dx = Math.min(Math.max(event.clientX - drag.startCss.x, d.x - start.x), d.x + d.w - (start.x + start.w));
+	const dy = Math.min(Math.max(event.clientY - drag.startCss.y, d.y - start.y), d.y + d.h - (start.y + start.h));
+	state.sel = { x: start.x + dx, y: start.y + dy, w: start.w, h: start.h };
+	const ratio = frameRatio.value;
+	state.ops = translateOps(drag.startOps, dx * ratio, dy * ratio);
+	repaint();
+}
+
+/** 拖控制点缩放：对边/对角为锚点，标注坐标按比例映射，线宽与字号不变 */
+function resizeSelection(event: PointerEvent, dir: ResizeDir, startSel: Rect, startOps: AnnotationOp[]): void {
+	const d = state.display;
+	const x = Math.min(Math.max(event.clientX, d.x), d.x + d.w);
+	const y = Math.min(Math.max(event.clientY, d.y), d.y + d.h);
+	let left = startSel.x;
+	let top = startSel.y;
+	let right = startSel.x + startSel.w;
+	let bottom = startSel.y + startSel.h;
+	// 拖过对边时停在最小尺寸，不做翻转
+	if (dir.includes('w')) left = Math.min(x, right - MIN_SEL);
+	if (dir.includes('e')) right = Math.max(x, left + MIN_SEL);
+	if (dir.includes('n')) top = Math.min(y, bottom - MIN_SEL);
+	if (dir.includes('s')) bottom = Math.max(y, top + MIN_SEL);
+	const next: Rect = { x: left, y: top, w: right - left, h: bottom - top };
+	state.sel = next;
+	const ratio = frameRatio.value;
+	const anchor = toFrame({
+		x: dir.includes('w') ? startSel.x + startSel.w : startSel.x,
+		y: dir.includes('n') ? startSel.y + startSel.h : startSel.y
+	});
+	state.ops = scaleOps(startOps, next.w / startSel.w, next.h / startSel.h, anchor);
+	repaint();
+}
+
 function onPointerMove(event: PointerEvent): void {
-	if (!drag) return;
+	if (!drag) {
+		setCursor(cursorForHit(hitTest(event.clientX, event.clientY)));
+		return;
+	}
 	if (drag.mode === 'select') {
 		const p = clampToDisplay(event.clientX, event.clientY);
 		state.sel = normalizeRect(drag.startCss, p);
 		repaint();
+		return;
+	}
+	if (drag.mode === 'move') {
+		moveSelection(event);
+		return;
+	}
+	if (drag.mode === 'resize') {
+		resizeSelection(event, drag.dir, drag.startSel, drag.startOps);
 		return;
 	}
 	const tool = state.tool;
@@ -489,25 +688,29 @@ function onPointerMove(event: PointerEvent): void {
 	repaint();
 }
 
-function onPointerUp(): void {
+function onPointerUp(event?: PointerEvent): void {
 	if (!drag) return;
 	const mode = drag.mode;
 	drag = null;
 	if (mode === 'select') {
 		const sel = state.sel;
-		if (!sel || sel.w < 5 || sel.h < 5) {
+		if (!sel || sel.w < MIN_SEL || sel.h < MIN_SEL) {
 			state.sel = null;
 			state.draft = null;
 		} else {
 			state.stage = 'annotate';
 		}
 		repaint();
-		return;
+	} else if (mode === 'move' || mode === 'resize') {
+		repaint();
+	} else {
+		const draft = state.draft;
+		state.draft = null;
+		if (draft && isMeaningful(draft)) state.ops.push(draft);
+		repaint();
 	}
-	const draft = state.draft;
-	state.draft = null;
-	if (draft && isMeaningful(draft)) state.ops.push(draft);
-	repaint();
+	// 松开后按落点刷新光标，不必等下一次移动
+	if (event) setCursor(cursorForHit(hitTest(event.clientX, event.clientY)));
 }
 
 function openTextEditor(p: Point): void {

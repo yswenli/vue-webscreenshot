@@ -78,6 +78,62 @@ function getScratch(w: number, h: number): HTMLCanvasElement {
 	return scratch;
 }
 
+/** 平移一组标注。返回新对象，拖拽过程中需要反复从快照重算 */
+export function translateOps(ops: AnnotationOp[], dx: number, dy: number): AnnotationOp[] {
+	if (!dx && !dy) return ops.slice();
+	return ops.map((op) => translateOp(op, dx, dy));
+}
+
+/** 以 anchor 为不动点缩放一组标注的坐标；线宽、字号保持不变 */
+export function scaleOps(ops: AnnotationOp[], sx: number, sy: number, anchor: Point): AnnotationOp[] {
+	if (sx === 1 && sy === 1) return ops.slice();
+	return ops.map((op) => scaleOp(op, sx, sy, anchor));
+}
+
+function translatePoint(p: Point, dx: number, dy: number): Point {
+	return { x: p.x + dx, y: p.y + dy };
+}
+
+function translateOp(op: AnnotationOp, dx: number, dy: number): AnnotationOp {
+	switch (op.type) {
+		case 'brush':
+			return { ...op, points: op.points.map((p) => translatePoint(p, dx, dy)) };
+		case 'arrow':
+			return { ...op, from: translatePoint(op.from, dx, dy), to: translatePoint(op.to, dx, dy) };
+		case 'text':
+			return { ...op, x: op.x + dx, y: op.y + dy };
+		default:
+			return { ...op, rect: { ...op.rect, x: op.rect.x + dx, y: op.rect.y + dy } };
+	}
+}
+
+function scalePoint(p: Point, sx: number, sy: number, anchor: Point): Point {
+	return { x: anchor.x + (p.x - anchor.x) * sx, y: anchor.y + (p.y - anchor.y) * sy };
+}
+
+function scaleOp(op: AnnotationOp, sx: number, sy: number, anchor: Point): AnnotationOp {
+	switch (op.type) {
+		case 'brush':
+			return { ...op, points: op.points.map((p) => scalePoint(p, sx, sy, anchor)) };
+		case 'arrow':
+			return {
+				...op,
+				from: scalePoint(op.from, sx, sy, anchor),
+				to: scalePoint(op.to, sx, sy, anchor)
+			};
+		case 'text':
+			return { ...op, x: anchor.x + (op.x - anchor.x) * sx, y: anchor.y + (op.y - anchor.y) * sy };
+		default: {
+			// 归一化矩形要重新映射对角两点；锚点那侧保持不动
+			const a = { x: op.rect.x, y: op.rect.y };
+			const b = { x: op.rect.x + op.rect.w, y: op.rect.y + op.rect.h };
+			const pa = scalePoint(a, sx, sy, anchor);
+			const pb = scalePoint(b, sx, sy, anchor);
+			return { ...op, rect: normalizeRect(pa, pb) };
+		}
+	}
+}
+
 export function normalizeRect(a: Point, b: Point): Rect {
 	return {
 		x: Math.min(a.x, b.x),

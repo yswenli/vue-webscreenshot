@@ -42,6 +42,7 @@ Adding a "screenshot feedback" feature usually drags in a screenshot library, ba
 | Capability | Description |
 | --- | --- |
 | 🖱 Select & capture | Grab the full screen, drag to select, live pixel size readout |
+| 🖐 Adjustable selection | Green frame + 8 resize handles once fixed; drag the region when no tool is active, annotations follow |
 | ✏️ Six annotations | Rectangle / Ellipse / Arrow / Brush / Mosaic / Text |
 | 🎨 Fine control | Three thickness levels (shapes/brush) · six-color palette · mosaic block size |
 | ⏪ Undo | `Ctrl / Cmd + Z` or the toolbar button — one step back |
@@ -133,6 +134,8 @@ function onSuccess(payload: { mode: 'clipboard' | 'download'; blob: Blob }) {
 Toolbar: `Rectangle ｜ Ellipse ｜ Arrow ｜ Brush ｜ Mosaic ｜ Text ｜ Undo ｜ Download ｜ Cancel ｜ Done`. Selecting a drawing tool expands a secondary toolbar: shapes/brush get three thickness levels and a six-color palette, mosaic only gets block size, text only gets color. Default is red, 2px.
 
 The text input box auto-grows with content; on commit, text lands according to the actual layout inside the box (including line breaks), exactly where you saw it — no shifting. Clicking elsewhere on the canvas, switching tools, undo / download / done all commit the in-progress text first.
+
+Once the selection is fixed, a green frame with 8 handles (four corners + four edge midpoints) appears outside it: drag a handle or an edge to resize, and the size readout in the top-left updates live. When no annotation tool is active, dragging inside the selection moves it as a whole, and existing annotations follow the move or scale proportionally with it (stroke width and font size stay unchanged). With a tool active, dragging inside draws annotations again — click the active tool once more to deselect it and move the selection.
 
 On Safari, "Done" also copies first; it only switches to download when the clipboard write is refused by the system or browser policy.
 
