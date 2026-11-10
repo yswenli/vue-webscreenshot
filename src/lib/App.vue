@@ -35,7 +35,7 @@
 				:font-sizes="fontSizes"
 				:color="state.color"
 				:anchor="state.sel"
-				:can-undo="state.ops.length > 0"
+				:can-undo="state.history.length > 0"
 				@update:model-value="onToolChange"
 				@update:width="onWidthChange"
 				@update:color="onColorChange"
@@ -76,6 +76,8 @@ const HANDLE_HIT = HANDLE_SIZE / 2 + 4;
 const EDGE_HIT = 4;
 /** 选区最小尺寸，单位 CSS 像素 */
 const MIN_SEL = 5;
+/** 撤销栈上限，避免长时间使用后无限增长 */
+const HISTORY_LIMIT = 100;
 /** 文字字号档位，单位 CSS 像素 */
 const FONT_SIZES = [12, 16, 20];
 /** 输入框内容内边距（与 .vws-text 的 padding 保持一致） */
@@ -114,6 +116,12 @@ const emit = defineEmits<{
 	(e: 'error', payload: { stage: 'unsupported' | 'capture' | 'clipboard'; message: string }): void;
 }>();
 
+/** 一次可撤销操作的「之前」状态：选区几何 + 标注快照 */
+interface Snapshot {
+	sel: Rect | null;
+	ops: AnnotationOp[];
+}
+
 interface ShotState {
 	visible: boolean;
 	capturing: boolean;
@@ -121,6 +129,8 @@ interface ShotState {
 	display: Rect;
 	sel: Rect | null;
 	ops: AnnotationOp[];
+	/** 撤销栈，存每次修改前的快照；标注新增、移动选区、缩放选区都记一条 */
+	history: Snapshot[];
 	draft: AnnotationOp | null;
 	tool: ToolType | null;
 	width: number;
@@ -143,6 +153,7 @@ const state = reactive<ShotState>({
 	display: { x: 0, y: 0, w: 0, h: 0 },
 	sel: null,
 	ops: [],
+	history: [],
 	draft: null,
 	tool: null,
 	width: 2,
@@ -307,6 +318,7 @@ function resetState(): void {
 	state.stage = 'selection';
 	state.sel = null;
 	state.ops = [];
+	state.history = [];
 	state.draft = null;
 	state.tool = null;
 	state.width = 2;
@@ -326,6 +338,7 @@ function resetForShot(): void {
 	state.stage = 'selection';
 	state.sel = null;
 	state.ops = [];
+	state.history = [];
 	state.draft = null;
 	state.tool = null;
 	state.width = 2;
@@ -690,9 +703,9 @@ function onPointerMove(event: PointerEvent): void {
 
 function onPointerUp(event?: PointerEvent): void {
 	if (!drag) return;
-	const mode = drag.mode;
+	const finished = drag;
 	drag = null;
-	if (mode === 'select') {
+	if (finished.mode === 'select') {
 		const sel = state.sel;
 		if (!sel || sel.w < MIN_SEL || sel.h < MIN_SEL) {
 			state.sel = null;
@@ -701,16 +714,27 @@ function onPointerUp(event?: PointerEvent): void {
 			state.stage = 'annotate';
 		}
 		repaint();
-	} else if (mode === 'move' || mode === 'resize') {
+	} else if (finished.mode === 'move' || finished.mode === 'resize') {
+		// 只在选区真的变了才记一条，避免「点一下没拖动」也占一次撤销
+		if (rectChanged(finished.startSel, state.sel)) {
+			pushHistory(finished.startSel, finished.startOps);
+		}
 		repaint();
 	} else {
 		const draft = state.draft;
 		state.draft = null;
-		if (draft && isMeaningful(draft)) state.ops.push(draft);
+		if (draft && isMeaningful(draft)) {
+			pushHistory();
+			state.ops.push(draft);
+		}
 		repaint();
 	}
 	// 松开后按落点刷新光标，不必等下一次移动
 	if (event) setCursor(cursorForHit(hitTest(event.clientX, event.clientY)));
+}
+
+function rectChanged(a: Rect, b: Rect | null): boolean {
+	return !b || a.x !== b.x || a.y !== b.y || a.w !== b.w || a.h !== b.h;
 }
 
 function openTextEditor(p: Point): void {
@@ -755,6 +779,7 @@ function commitText(): void {
 	if (text) {
 		// 落字原点取输入框内首行文字的位置，预览与成品完全重合
 		const origin = toFrame({ x: box.left + TEXT_PAD_X, y: box.top + box.textOffsetY });
+		pushHistory();
 		state.ops.push({ type: 'text', color: state.color, width: state.width, x: origin.x, y: origin.y, text });
 	}
 	repaint();
@@ -767,11 +792,28 @@ function cancelText(): void {
 	repaint();
 }
 
+/**
+ * 记录一次可撤销操作之前的状态。
+ * 默认取当前选区与标注；ops 只做浅拷贝，标注对象本身始终按不可变方式使用。
+ */
+function pushHistory(sel: Rect | null = state.sel, ops: AnnotationOp[] = state.ops): void {
+	state.history.push({ sel: sel ? { ...sel } : null, ops: ops.slice() });
+	if (state.history.length > HISTORY_LIMIT) state.history.shift();
+}
+
 function undo(): void {
 	// 输入中的文字先落地再撤销，撤销按钮点击不会因为 pointerdown 被拦截而丢字
 	if (state.textEditing) commitText();
-	if (!state.ops.length) return;
-	state.ops.pop();
+	const snapshot = state.history.pop();
+	if (!snapshot) return;
+	// 窗口尺寸可能在拖拽后被改过，恢复时再夹一次，避免选区跑到画面外
+	state.sel = snapshot.sel
+		? normalizeRect(
+				clampToDisplay(snapshot.sel.x, snapshot.sel.y),
+				clampToDisplay(snapshot.sel.x + snapshot.sel.w, snapshot.sel.y + snapshot.sel.h)
+			)
+		: null;
+	state.ops = snapshot.ops.slice();
 	repaint();
 }
 

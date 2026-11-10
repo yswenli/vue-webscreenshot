@@ -45,7 +45,7 @@ Adding a "screenshot feedback" feature usually drags in a screenshot library, ba
 | 🖐 Adjustable selection | Green frame + 8 resize handles once fixed; drag the region when no tool is active, annotations follow |
 | ✏️ Six annotations | Rectangle / Ellipse / Arrow / Brush / Mosaic / Text |
 | 🎨 Fine control | Three thickness levels (shapes/brush) · six-color palette · mosaic block size |
-| ⏪ Undo | `Ctrl / Cmd + Z` or the toolbar button — one step back |
+| ⏪ Undo | `Ctrl / Cmd + Z` or the toolbar button — one step back; annotations, selection moves and resizes are all recorded |
 | 📋 One-click copy | Writes to clipboard first, falls back to download when unsupported; Safari's gesture requirement is handled |
 | 💾 Timestamped download | Auto-named files like `screenshot-20261104-153000.png` |
 | 🧩 Low coupling | `Teleport` to body, configurable `z-index`, no host-layout pollution |
@@ -125,7 +125,7 @@ function onSuccess(payload: { mode: 'clipboard' | 'download'; blob: Blob }) {
 | --- | --- |
 | Drag | Select the screenshot region; drag inside the region to annotate after it's fixed |
 | `Esc` | Close the text input if open; otherwise cancel and close |
-| `Ctrl / Cmd + Z` | Undo the last annotation |
+| `Ctrl / Cmd + Z` | Undo the last action (new annotation, selection move, or selection resize) |
 | `Enter` | Same as "Done"; while typing text, commits the text |
 | `Shift + Enter` | New line while typing text — multi-line annotations supported |
 
@@ -135,7 +135,7 @@ Toolbar: `Rectangle ｜ Ellipse ｜ Arrow ｜ Brush ｜ Mosaic ｜ Text ｜ Undo
 
 The text input box auto-grows with content; on commit, text lands according to the actual layout inside the box (including line breaks), exactly where you saw it — no shifting. Clicking elsewhere on the canvas, switching tools, undo / download / done all commit the in-progress text first.
 
-Once the selection is fixed, a green frame with 8 handles (four corners + four edge midpoints) appears outside it: drag a handle or an edge to resize, and the size readout in the top-left updates live. When no annotation tool is active, dragging inside the selection moves it as a whole, and existing annotations follow the move or scale proportionally with it (stroke width and font size stay unchanged). With a tool active, dragging inside draws annotations again — click the active tool once more to deselect it and move the selection.
+Once the selection is fixed, a green frame with 8 handles (four corners + four edge midpoints) appears outside it: drag a handle or an edge to resize, and the size readout in the top-left updates live. When no annotation tool is active, dragging inside the selection moves it as a whole, and existing annotations follow the move or scale proportionally with it (stroke width and font size stay unchanged). With a tool active, dragging inside draws annotations again — click the active tool once more to deselect it and move the selection. Both moves and resizes go into the undo stack, so `Ctrl / Cmd + Z` steps back to the previous position and size.
 
 On Safari, "Done" also copies first; it only switches to download when the clipboard write is refused by the system or browser policy.
 
