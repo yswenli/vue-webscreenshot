@@ -18,6 +18,23 @@
 			<button type="button" class="vws-tb__btn is-primary" title="完成 (Enter)" v-html="icons.check" @click="emit('confirm')" />
 		</div>
 		<div v-if="modelValue" class="vws-tb__options">
+			<!-- 箭头样式：三选一，落笔时写进标注 -->
+			<template v-if="modelValue === 'arrow'">
+				<span class="vws-tb__label">样式</span>
+				<button
+					v-for="item in arrowStyleItems"
+					:key="item.key"
+					type="button"
+					class="vws-tb__btn vws-tb__btn--style"
+					:class="{ 'is-active': arrowStyle === item.key }"
+					:title="item.title"
+					:aria-label="item.title"
+					:aria-pressed="arrowStyle === item.key"
+					v-html="item.icon"
+					@click="emit('update:arrowStyle', item.key)"
+				/>
+				<span class="vws-tb__sep" />
+			</template>
 			<!-- 主体大小：文字用下拉，其余一律手输 -->
 			<span class="vws-tb__label">{{ sizeLabel }}</span>
 			<select
@@ -132,7 +149,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { icons } from './icons';
-import type { Rect, ToolType } from './annotation';
+import type { ArrowStyle, Rect, ToolType } from './annotation';
 import { MIN_SIZE, useNumberField } from './numberField';
 
 const props = defineProps<{
@@ -153,6 +170,8 @@ const props = defineProps<{
 	fillColor: string;
 	/** 主体颜色：文字颜色 / 图形线条色 */
 	color: string;
+	/** 箭头样式；仅箭头工具使用 */
+	arrowStyle: ArrowStyle;
 	anchor: Rect;
 	canUndo: boolean;
 }>();
@@ -166,6 +185,7 @@ const emit = defineEmits<{
 	(e: 'update:fillEnabled', value: boolean): void;
 	(e: 'update:fillColor', value: string): void;
 	(e: 'update:color', value: string): void;
+	(e: 'update:arrowStyle', value: ArrowStyle): void;
 	(e: 'undo'): void;
 	(e: 'download'): void;
 	(e: 'cancel'): void;
@@ -179,6 +199,12 @@ const toolItems: { key: ToolType; title: string }[] = [
 	{ key: 'brush', title: '画笔' },
 	{ key: 'mosaic', title: '马赛克' },
 	{ key: 'text', title: '文字' }
+];
+
+const arrowStyleItems: { key: ArrowStyle; title: string; icon: string }[] = [
+	{ key: 'thin', title: '细尾箭头', icon: icons.arrow },
+	{ key: 'wedge', title: '楔形粗尾箭头', icon: icons.arrowWedge },
+	{ key: 'double', title: '双向箭头', icon: icons.arrowDouble }
 ];
 
 const rootRef = ref<HTMLElement | null>(null);
@@ -335,6 +361,17 @@ onUnmounted(() => {
 
 .vws-tb__btn :deep(svg) {
 	display: block;
+}
+
+/* 箭头样式：三个并排图标按钮，压低高度对齐二级工具栏 */
+.vws-tb__btn--style {
+	width: 24px;
+	height: 22px;
+}
+
+.vws-tb__btn--style :deep(svg) {
+	width: 14px;
+	height: 14px;
 }
 
 .vws-tb__sep {

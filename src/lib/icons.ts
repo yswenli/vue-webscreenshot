@@ -6,6 +6,10 @@ export const icons = {
 	rect: wrap('<rect x="2.5" y="3.5" width="11" height="9" rx="1"/>'),
 	ellipse: wrap('<ellipse cx="8" cy="8" rx="5.5" ry="4"/>'),
 	arrow: wrap('<path d="M3 13 13 3"/><path d="M8.5 3H13v4.5"/>'),
+	// 楔形粗尾：粗箭杆 + 更宽三角头
+	arrowWedge: wrap('<path d="M2.6 13.4 9.9 6.1" stroke-width="2.6"/><path d="M13.5 2.5 9.1 3.9 12.1 6.9z" fill="currentColor" stroke="none"/>'),
+	// 双向箭头：两端各一支箭头
+	arrowDouble: wrap('<path d="M3.5 12.5 12.5 3.5"/><path d="M8.5 3.5h4v4"/><path d="M7.5 12.5h-4v-4"/>'),
 	brush: wrap('<path d="M3 13.2 4.2 9.8l6.6-6.6a1.7 1.7 0 0 1 2.4 2.4l-6.6 6.6z"/><path d="M9.4 4.6l2.4 2.4"/>'),
 	mosaic: wrap('<rect x="2.5" y="2.5" width="4.5" height="4.5"/><rect x="9" y="3" width="4.5" height="4.5"/><rect x="3" y="9" width="4.5" height="4.5"/><rect x="8.5" y="8.5" width="5" height="5"/>'),
 	text: wrap('<path d="M3 3.5h10"/><path d="M8 3.5v9"/><path d="M5.5 12.5h5"/>'),

@@ -39,6 +39,7 @@
 				:fill-enabled="state.fillEnabled"
 				:fill-color="state.fillColor"
 				:color="state.color"
+				:arrow-style="state.arrowStyle"
 				:anchor="state.sel"
 				:can-undo="state.history.length > 0"
 				@update:model-value="onToolChange"
@@ -49,6 +50,7 @@
 				@update:fill-enabled="onFillEnabledChange"
 				@update:fill-color="onFillColorChange"
 				@update:color="onColorChange"
+				@update:arrow-style="onArrowStyleChange"
 				@undo="undo"
 				@download="onDownload"
 				@cancel="cancel"
@@ -74,7 +76,7 @@ import {
 	TEXT_FONT_SIZE,
 	TEXT_LINE_HEIGHT_RATIO
 } from './annotation';
-import type { AnnotationOp, Point, Rect, TextOp, ToolType } from './annotation';
+import type { AnnotationOp, ArrowStyle, Point, Rect, TextOp, ToolType } from './annotation';
 import { clampSize } from './numberField';
 
 /** 主体默认颜色：图形线条色 / 文字颜色 */
@@ -156,6 +158,8 @@ interface ShotState {
 	width: number;
 	/** 主体颜色：文字颜色 / 图形线条色 */
 	color: string;
+	/** 箭头样式；仅箭头工具使用，落笔时写进标注 */
+	arrowStyle: ArrowStyle;
 	/** 是否绘制外圈描边 */
 	strokeEnabled: boolean;
 	/** 描边宽度，CSS 像素，默认 0.1 */
@@ -191,6 +195,7 @@ const state = reactive<ShotState>({
 	tool: null,
 	width: 2,
 	color: DEFAULT_COLOR,
+	arrowStyle: 'thin',
 	strokeEnabled: false,
 	strokeWidth: DEFAULT_STROKE_WIDTH,
 	strokeColor: DEFAULT_STROKE_COLOR,
@@ -668,6 +673,7 @@ function buildOp(tool: ToolType, from: Point, to: Point, points: Point[]): Annot
 			color,
 			strokeWidth,
 			strokeColor,
+			arrowStyle: state.arrowStyle,
 			from: { ...from },
 			to: { ...to }
 		};
@@ -1086,6 +1092,10 @@ function onFillColorChange(value: string): void {
 
 function onColorChange(value: string): void {
 	state.color = value;
+}
+
+function onArrowStyleChange(value: ArrowStyle): void {
+	state.arrowStyle = value;
 }
 
 function downloadBlob(blob: Blob): void {

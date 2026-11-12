@@ -12,6 +12,9 @@ export interface Rect {
 
 export type ToolType = 'rect' | 'ellipse' | 'arrow' | 'brush' | 'mosaic' | 'text';
 
+/** 箭头三种样式：细尾（细箭杆 + 三角头）、楔形粗尾（粗箭杆 + 更宽三角头）、双向（两端都有头） */
+export type ArrowStyle = 'thin' | 'wedge' | 'double';
+
 /**
  * 所有工具都分「主体 + 描边」两层：
  * - `width` / `color` 是主体：图形线宽与线条色、文字字号与文字色、马赛克块大小；
@@ -48,6 +51,8 @@ export interface MosaicOp extends BaseOp {
 /** 箭头必须保留起止顺序：归一化成矩形会丢掉方向，画出来会指向反方向 */
 export interface ArrowOp extends BaseOp {
 	type: 'arrow';
+	/** 落笔时定稿的样式；同一支箭头不在事后改样式 */
+	arrowStyle: ArrowStyle;
 	from: Point;
 	to: Point;
 }
@@ -269,59 +274,164 @@ function drawRectShape(ctx: CanvasRenderingContext2D, op: RectShapeOp, opt: Draw
 /** 箭头张角的一半 */
 const ARROW_HEAD_ANGLE = Math.PI / 7;
 
+/** 计算后的箭头几何，坐标全部是绘制目标像素；画布只负责描边与填充 */
+export interface ArrowGeometry {
+	/** 箭杆两端；楔形整支是实心多边形，没有独立箭杆 */
+	shaft: [Point, Point] | null;
+	/** 头部三角：[尖点, 一侧翼, 另一侧翼] */
+	head: [Point, Point, Point];
+	/** 双向箭头的尾端三角；其余样式为 null */
+	tailHead: [Point, Point, Point] | null;
+	/** 楔形实心轮廓；其余样式为 null */
+	wedge: Point[] | null;
+}
+
+/** 楔形箭杆半宽：明显粗于细尾线宽，才看得出「粗尾」 */
+export function arrowBodyHalf(main: number, widthScale: number): number {
+	return Math.max(main * 0.75, 2 * widthScale);
+}
+
+/** 楔形箭头三角的半宽：比箭杆更宽，形成醒目的头 */
+export function arrowHeadHalf(main: number, widthScale: number): number {
+	return Math.max(main * 1.5, 5 * widthScale);
+}
+
+/**
+ * 按样式计算箭头几何。
+ * 纯函数、不碰 canvas，坐标与宽度都须先换算到目标画布像素，便于单测。
+ */
+export function computeArrowGeometry(
+	from: Point,
+	to: Point,
+	main: number,
+	widthScale: number,
+	style: ArrowStyle = 'thin',
+): ArrowGeometry | null {
+	const dx = to.x - from.x;
+	const dy = to.y - from.y;
+	const length = Math.hypot(dx, dy);
+	if (length < 0.5) return null;
+	const angle = Math.atan2(dy, dx);
+	// 头部长度不超过箭杆的一半，否则短箭头的三角会翻出起点、画成反向
+	const head = Math.min(Math.max(10 * widthScale, main * 3.5), length * 0.5);
+	/** 以 tip 为尖点、按 dir 方向反推的两片翼 */
+	const headAt = (tip: Point, dir: number): [Point, Point, Point] => [
+		{ ...tip },
+		{
+			x: tip.x - head * Math.cos(dir - ARROW_HEAD_ANGLE),
+			y: tip.y - head * Math.sin(dir - ARROW_HEAD_ANGLE),
+		},
+		{
+			x: tip.x - head * Math.cos(dir + ARROW_HEAD_ANGLE),
+			y: tip.y - head * Math.sin(dir + ARROW_HEAD_ANGLE),
+		},
+	];
+	if (style === 'wedge') {
+		const baseX = to.x - head * Math.cos(angle);
+		const baseY = to.y - head * Math.sin(angle);
+		const nx = -Math.sin(angle);
+		const ny = Math.cos(angle);
+		const body = arrowBodyHalf(main, widthScale);
+		// 短箭头不放大头宽，否则 5px 长的箭头会顶出 10px 宽的三角
+		const barb = Math.max(body, Math.min(arrowHeadHalf(main, widthScale), length * 0.4));
+		return {
+			shaft: null,
+			head: headAt(to, angle),
+			tailHead: null,
+			// 粗箭杆从尾端到头部根部，再向外张开成三角头：尾粗、头更宽
+			wedge: [
+				{ x: from.x + nx * body, y: from.y + ny * body },
+				{ x: baseX + nx * body, y: baseY + ny * body },
+				{ x: baseX + nx * barb, y: baseY + ny * barb },
+				{ x: to.x, y: to.y },
+				{ x: baseX - nx * barb, y: baseY - ny * barb },
+				{ x: baseX - nx * body, y: baseY - ny * body },
+				{ x: from.x - nx * body, y: from.y - ny * body },
+			],
+		};
+	}
+	const shaftEnd = { x: to.x - head * Math.cos(angle), y: to.y - head * Math.sin(angle) };
+	const shaftStart = { x: from.x + head * Math.cos(angle), y: from.y + head * Math.sin(angle) };
+	return {
+		shaft: style === 'double' ? [shaftStart, shaftEnd] : [{ ...from }, shaftEnd],
+		head: headAt(to, angle),
+		// 尾端三角朝反方向，两端各一支箭头
+		tailHead: style === 'double' ? headAt({ ...from }, angle + Math.PI) : null,
+		wedge: null,
+	};
+}
+
 function drawArrow(ctx: CanvasRenderingContext2D, op: ArrowOp, opt: DrawOption): void {
 	const main = mainWidthOf(op, opt);
 	const outline = strokeWidthOf(op, opt);
-	const x1 = opt.offsetX + op.from.x * opt.scale;
-	const y1 = opt.offsetY + op.from.y * opt.scale;
-	const x2 = opt.offsetX + op.to.x * opt.scale;
-	const y2 = opt.offsetY + op.to.y * opt.scale;
-	const dx = x2 - x1;
-	const dy = y2 - y1;
-	const length = Math.hypot(dx, dy);
-	if (length < 0.5) return;
-	// 头部长度不超过箭杆的一半，否则短箭头的三角会翻出起点、画成反向
-	const head = Math.min(Math.max(10 * opt.widthScale, main * 3.5), length * 0.5);
-	const angle = Math.atan2(dy, dx);
-	// 箭杆止于三角根部，避免粗线从尖端穿出
-	const shaftX = x2 - head * Math.cos(angle);
-	const shaftY = y2 - head * Math.sin(angle);
-	const leftX = x2 - head * Math.cos(angle - ARROW_HEAD_ANGLE);
-	const leftY = y2 - head * Math.sin(angle - ARROW_HEAD_ANGLE);
-	const rightX = x2 - head * Math.cos(angle + ARROW_HEAD_ANGLE);
-	const rightY = y2 - head * Math.sin(angle + ARROW_HEAD_ANGLE);
+	const from = { x: opt.offsetX + op.from.x * opt.scale, y: opt.offsetY + op.from.y * opt.scale };
+	const to = { x: opt.offsetX + op.to.x * opt.scale, y: opt.offsetY + op.to.y * opt.scale };
+	const geometry = computeArrowGeometry(from, to, main, opt.widthScale, op.arrowStyle);
+	if (!geometry) return;
 	ctx.save();
 	ctx.lineCap = 'round';
 	ctx.lineJoin = 'round';
+	const wedge = geometry.wedge;
+	if (wedge) {
+		const traceWedge = (): void => {
+			ctx.beginPath();
+			ctx.moveTo(wedge[0].x, wedge[0].y);
+			for (let i = 1; i < wedge.length; i++) ctx.lineTo(wedge[i].x, wedge[i].y);
+			ctx.closePath();
+		};
+		// 先描外圈再填主体：外圈被主体盖住内侧，只留下外侧一圈
+		if (outline) {
+			traceWedge();
+			ctx.strokeStyle = op.strokeColor;
+			ctx.lineWidth = outline * 2;
+			ctx.stroke();
+		}
+		traceWedge();
+		ctx.fillStyle = op.color;
+		ctx.fill();
+		ctx.restore();
+		return;
+	}
+	const traceHead = (triangle: [Point, Point, Point]): void => {
+		ctx.beginPath();
+		ctx.moveTo(triangle[0].x, triangle[0].y);
+		ctx.lineTo(triangle[1].x, triangle[1].y);
+		ctx.lineTo(triangle[2].x, triangle[2].y);
+		ctx.closePath();
+	};
+	const traceShaft = (): void => {
+		const shaft = geometry.shaft;
+		if (!shaft) return;
+		ctx.beginPath();
+		ctx.moveTo(shaft[0].x, shaft[0].y);
+		ctx.lineTo(shaft[1].x, shaft[1].y);
+	};
+	const heads = geometry.tailHead ? [geometry.head, geometry.tailHead] : [geometry.head];
 	if (outline) {
 		// 外圈：先按「主体 + 两侧描边」描一遍箭杆与三角，再让主体压在上面
 		ctx.strokeStyle = op.strokeColor;
 		ctx.lineWidth = main + outline * 2;
-		ctx.beginPath();
-		ctx.moveTo(x1, y1);
-		ctx.lineTo(shaftX, shaftY);
-		ctx.stroke();
+		if (geometry.shaft) {
+			traceShaft();
+			ctx.stroke();
+		}
 		ctx.lineWidth = outline * 2;
-		ctx.beginPath();
-		ctx.moveTo(x2, y2);
-		ctx.lineTo(leftX, leftY);
-		ctx.lineTo(rightX, rightY);
-		ctx.closePath();
-		ctx.stroke();
+		for (const triangle of heads) {
+			traceHead(triangle);
+			ctx.stroke();
+		}
 	}
 	ctx.strokeStyle = op.color;
 	ctx.fillStyle = op.color;
 	ctx.lineWidth = main;
-	ctx.beginPath();
-	ctx.moveTo(x1, y1);
-	ctx.lineTo(shaftX, shaftY);
-	ctx.stroke();
-	ctx.beginPath();
-	ctx.moveTo(x2, y2);
-	ctx.lineTo(leftX, leftY);
-	ctx.lineTo(rightX, rightY);
-	ctx.closePath();
-	ctx.fill();
+	if (geometry.shaft) {
+		traceShaft();
+		ctx.stroke();
+	}
+	for (const triangle of heads) {
+		traceHead(triangle);
+		ctx.fill();
+	}
 	ctx.restore();
 }
 

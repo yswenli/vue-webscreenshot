@@ -31,7 +31,7 @@ Adding a "screenshot feedback" feature usually drags in a screenshot library, ba
 - **Zero backend**: `getDisplayMedia` capture + Canvas composition, all inside the user's browser — no network requests at all.
 - **Plug & play**: a single `<WebScreenshot />` tag, controlled with `v-model:show`; three lines of code to integrate.
 - **Cross-browser**: Chrome / Edge / 360 Speed mode and macOS Safari 13+ share one implementation; Safari's clipboard gesture restriction is handled inside the component.
-- **WeChat-screenshot experience**: six annotation tools — rectangle, ellipse, arrow, brush, mosaic and text — with hand-typed sizes, color pickers, independent stroke and fill switches, and one-step undo.
+- **WeChat-screenshot experience**: six annotation tools — rectangle, ellipse, arrow (thin / wedge / double-headed), brush, mosaic and text — with hand-typed sizes, color pickers, independent stroke and fill switches, and one-step undo.
 - **Local & privacy-safe**: the captured image never leaves the browser, ideal for privacy-sensitive workflows (support tickets, bug reports, design walkthroughs).
 - **Crisp & sharp**: rendered at device-pixel-ratio (DPR) resolution, so annotations stay clean at full quality.
 
@@ -51,6 +51,7 @@ Adding a "screenshot feedback" feature usually drags in a screenshot library, ba
 | 🧩 Low coupling | `Teleport` to body, configurable `z-index`, no host-layout pollution |
 | 🔤 Smart text | Input box auto-grows, final text lands **exactly where it previews**; click existing text to re-edit, multi-line with outline |
 | 📐 Directional arrows | Preserves the drag direction — all eight directions point where you released |
+| ➡️ Three arrow styles | Thin tail / wedge / double-headed, fixed when drawn and preserved through export and undo |
 | 📱 Responsive | Re-lays out on window resize; selection and annotations stay in place |
 | 🌐 Browser support | Works out of the box on Chromium-based browsers and macOS Safari 13+; Safari 16.1+ can share a single window |
 
@@ -135,7 +136,8 @@ function onSuccess(payload: { mode: 'clipboard' | 'download'; blob: Blob }) {
 Toolbar: `Rectangle ｜ Ellipse ｜ Arrow ｜ Brush ｜ Mosaic ｜ Text ｜ Undo ｜ Download ｜ Cancel ｜ Done`. Selecting a drawing tool expands a secondary toolbar:
 
 - Rectangle / Ellipse: hand-typed `Size` line width, a `Color` picker, and a `Stroke` switch + hand-typed width + stroke color, plus a `Fill` switch + fill color;
-- Arrow / Brush: hand-typed `Size` line width, a `Color` picker, and a `Stroke` switch + hand-typed width + stroke color;
+- Arrow: a one-of-three `Style` switch (thin / wedge / double-headed), hand-typed `Size` line width, a `Color` picker, and a `Stroke` switch + hand-typed width + stroke color;
+- Brush: hand-typed `Size` line width, a `Color` picker, and a `Stroke` switch + hand-typed width + stroke color;
 - Mosaic: hand-typed block size;
 - Text: a font-size dropdown (default `12`), a text color picker, and a `Stroke` switch + hand-typed width + stroke color.
 
